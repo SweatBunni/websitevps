@@ -882,12 +882,23 @@ function formatResearchPromptContext(researchBundle) {
   if (!researchBundle || !Array.isArray(researchBundle.evidence) || !researchBundle.evidence.length) {
     return '';
   }
-  const successful = researchBundle.evidence
-    .filter(entry => entry && entry.status === 'ok' && entry.snippet)
+  const official = researchBundle.evidence
+    .filter(entry => entry && entry.status === 'ok' && entry.snippet && entry.tier !== 'community')
     .slice(0, 6)
     .map(entry => `- ${entry.title || entry.url}: ${entry.snippet}`);
-  if (!successful.length) return '';
-  return `Official research bundle for this target:\n${successful.join('\n')}\nUse these official-source hints when fixing loader/version-specific APIs, mappings, plugins, and dependencies.`;
+  const community = researchBundle.evidence
+    .filter(entry => entry && entry.status === 'ok' && entry.snippet && entry.tier === 'community')
+    .slice(0, 6)
+    .map(entry => `- ${entry.title || entry.url}: ${entry.snippet}`);
+  if (!official.length && !community.length) return '';
+  const sections = [];
+  if (official.length) {
+    sections.push(`Official research bundle for this target:\n${official.join('\n')}`);
+  }
+  if (community.length) {
+    sections.push(`Supplemental community research for this target:\n${community.join('\n')}\nTreat community findings as hints only. When they conflict with official metadata or docs, follow the official sources.`);
+  }
+  return sections.join('\n');
 }
 
 function buildRepairGuidance(loader, version) {

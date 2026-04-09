@@ -143,6 +143,106 @@ const OFFICIAL_DOC_SOURCES = {
   ],
 };
 
+const COMMUNITY_RESEARCH_SOURCES = {
+  fabric: [
+    {
+      key: 'fabricGithubDiscussions',
+      url: 'https://github.com/orgs/FabricMC/discussions',
+      kind: 'text',
+      title: 'FabricMC GitHub discussions',
+      tier: 'community',
+    },
+    {
+      key: 'fabricLoomIssues',
+      url: 'https://github.com/FabricMC/fabric-loom/issues',
+      kind: 'text',
+      title: 'Fabric Loom issues',
+      tier: 'community',
+    },
+    {
+      key: 'yarnJavadocs',
+      url: 'https://maven.fabricmc.net/docs/yarn-1.21.1+build.3/index.html',
+      kind: 'text',
+      title: 'Yarn Javadocs index',
+      tier: 'community',
+    },
+    {
+      key: 'mixinWiki',
+      url: 'https://github.com/SpongePowered/Mixin/wiki',
+      kind: 'text',
+      title: 'Mixin wiki',
+      tier: 'community',
+    },
+    {
+      key: 'modrinthDocs',
+      url: 'https://docs.modrinth.com/',
+      kind: 'text',
+      title: 'Modrinth docs',
+      tier: 'community',
+    },
+  ],
+  forge: [
+    {
+      key: 'forgeForums',
+      url: 'https://forums.minecraftforge.net/',
+      kind: 'text',
+      title: 'Forge forums',
+      tier: 'community',
+    },
+    {
+      key: 'forgeGithubIssues',
+      url: 'https://github.com/MinecraftForge/MinecraftForge/issues',
+      kind: 'text',
+      title: 'MinecraftForge issues',
+      tier: 'community',
+    },
+    {
+      key: 'mixinWikiForge',
+      url: 'https://github.com/SpongePowered/Mixin/wiki',
+      kind: 'text',
+      title: 'Mixin wiki',
+      tier: 'community',
+    },
+    {
+      key: 'modrinthDocsForge',
+      url: 'https://docs.modrinth.com/',
+      kind: 'text',
+      title: 'Modrinth docs',
+      tier: 'community',
+    },
+  ],
+  neoforge: [
+    {
+      key: 'neoforgeGithubIssues',
+      url: 'https://github.com/neoforged/NeoForge/issues',
+      kind: 'text',
+      title: 'NeoForge issues',
+      tier: 'community',
+    },
+    {
+      key: 'neoforgeGithubDiscussions',
+      url: 'https://github.com/orgs/neoforged/discussions',
+      kind: 'text',
+      title: 'NeoForged discussions',
+      tier: 'community',
+    },
+    {
+      key: 'mixinWikiNeoForge',
+      url: 'https://github.com/SpongePowered/Mixin/wiki',
+      kind: 'text',
+      title: 'Mixin wiki',
+      tier: 'community',
+    },
+    {
+      key: 'modrinthDocsNeoForge',
+      url: 'https://docs.modrinth.com/',
+      kind: 'text',
+      title: 'Modrinth docs',
+      tier: 'community',
+    },
+  ],
+};
+
 export async function getLoaderVersions(loader) {
   return withCache(`loader-versions:${loader}`, async () => {
     if (loader === 'fabric') {
@@ -216,13 +316,15 @@ export async function getDeepBuildResearch(loader, version, options = {}) {
   const timeBudgetMs = Number(options.timeBudgetMs) > 0
     ? Number(options.timeBudgetMs)
     : DEEP_RESEARCH_BUDGET_MS;
+  const includeCommunity = options.includeCommunity !== false;
   const cacheKey = `deep-build:${loader}:${version}:${timeBudgetMs}`;
   return withCache(cacheKey, async () => {
     const startedAt = Date.now();
     const baseResearch = await getBuildResearch(loader, version);
     const coreSources = buildCoreResearchSources(loader, version);
     const docSources = OFFICIAL_DOC_SOURCES[loader] || [];
-    const allSources = [...coreSources, ...docSources];
+    const communitySources = includeCommunity ? (COMMUNITY_RESEARCH_SOURCES[loader] || []) : [];
+    const allSources = [...coreSources, ...docSources, ...communitySources];
     const evidence = await fetchDeepResearchEvidence(allSources, timeBudgetMs);
     const completedAt = Date.now();
     return {
@@ -375,29 +477,29 @@ async function fetchNeoForgeBuildResearch(version) {
 function buildCoreResearchSources(loader, version) {
   if (loader === 'fabric') {
     return [
-      { key: 'fabricLoaderVersions', url: SOURCES.fabricLoaderVersions, kind: 'json', title: 'Fabric Meta loader versions' },
-      { key: 'fabricLoaderMetadata', url: SOURCES.fabricLoaderMetadata, kind: 'xml', title: 'Fabric loader Maven metadata' },
-      { key: 'fabricYarnVersions', url: SOURCES.fabricYarnVersions(version), kind: 'json', title: 'Fabric Meta Yarn versions' },
-      { key: 'fabricYarnMetadata', url: SOURCES.fabricYarnMetadata, kind: 'xml', title: 'Fabric Yarn Maven metadata' },
-      { key: 'fabricApiMetadata', url: SOURCES.fabricApiMetadata, kind: 'xml', title: 'Fabric API Maven metadata' },
-      { key: 'fabricLoomPluginMetadata', url: SOURCES.fabricLoomPluginMetadata, kind: 'xml', title: 'Fabric Loom plugin metadata' },
-      { key: 'gradleVersions', url: SOURCES.gradleVersions, kind: 'json', title: 'Gradle versions' },
+      { key: 'fabricLoaderVersions', url: SOURCES.fabricLoaderVersions, kind: 'json', title: 'Fabric Meta loader versions', tier: 'official' },
+      { key: 'fabricLoaderMetadata', url: SOURCES.fabricLoaderMetadata, kind: 'xml', title: 'Fabric loader Maven metadata', tier: 'official' },
+      { key: 'fabricYarnVersions', url: SOURCES.fabricYarnVersions(version), kind: 'json', title: 'Fabric Meta Yarn versions', tier: 'official' },
+      { key: 'fabricYarnMetadata', url: SOURCES.fabricYarnMetadata, kind: 'xml', title: 'Fabric Yarn Maven metadata', tier: 'official' },
+      { key: 'fabricApiMetadata', url: SOURCES.fabricApiMetadata, kind: 'xml', title: 'Fabric API Maven metadata', tier: 'official' },
+      { key: 'fabricLoomPluginMetadata', url: SOURCES.fabricLoomPluginMetadata, kind: 'xml', title: 'Fabric Loom plugin metadata', tier: 'official' },
+      { key: 'gradleVersions', url: SOURCES.gradleVersions, kind: 'json', title: 'Gradle versions', tier: 'official' },
     ];
   }
   if (loader === 'forge') {
     return [
-      { key: 'forgePromotions', url: SOURCES.forgePromotions, kind: 'json', title: 'Forge promotions' },
-      { key: 'forgeMetadata', url: SOURCES.forgeMetadata, kind: 'xml', title: 'Forge Maven metadata' },
-      { key: 'forgeGradlePluginMetadata', url: SOURCES.forgeGradlePluginMetadata, kind: 'xml', title: 'ForgeGradle plugin metadata' },
-      { key: 'foojayResolverMetadata', url: SOURCES.foojayResolverMetadata, kind: 'xml', title: 'Foojay resolver metadata' },
-      { key: 'gradleVersions', url: SOURCES.gradleVersions, kind: 'json', title: 'Gradle versions' },
+      { key: 'forgePromotions', url: SOURCES.forgePromotions, kind: 'json', title: 'Forge promotions', tier: 'official' },
+      { key: 'forgeMetadata', url: SOURCES.forgeMetadata, kind: 'xml', title: 'Forge Maven metadata', tier: 'official' },
+      { key: 'forgeGradlePluginMetadata', url: SOURCES.forgeGradlePluginMetadata, kind: 'xml', title: 'ForgeGradle plugin metadata', tier: 'official' },
+      { key: 'foojayResolverMetadata', url: SOURCES.foojayResolverMetadata, kind: 'xml', title: 'Foojay resolver metadata', tier: 'official' },
+      { key: 'gradleVersions', url: SOURCES.gradleVersions, kind: 'json', title: 'Gradle versions', tier: 'official' },
     ];
   }
   if (loader === 'neoforge') {
     return [
-      { key: 'neoforgeMetadata', url: SOURCES.neoforgeMetadata, kind: 'xml', title: 'NeoForge Maven metadata' },
-      { key: 'neoforgeUserdevMetadata', url: SOURCES.neoforgeUserdevMetadata, kind: 'xml', title: 'NeoForge userdev plugin metadata' },
-      { key: 'gradleVersions', url: SOURCES.gradleVersions, kind: 'json', title: 'Gradle versions' },
+      { key: 'neoforgeMetadata', url: SOURCES.neoforgeMetadata, kind: 'xml', title: 'NeoForge Maven metadata', tier: 'official' },
+      { key: 'neoforgeUserdevMetadata', url: SOURCES.neoforgeUserdevMetadata, kind: 'xml', title: 'NeoForge userdev plugin metadata', tier: 'official' },
+      { key: 'gradleVersions', url: SOURCES.gradleVersions, kind: 'json', title: 'Gradle versions', tier: 'official' },
     ];
   }
   return [];
@@ -419,6 +521,7 @@ async function fetchResearchSource(source, deadlineMs) {
       url: source.url,
       title: source.title || source.url,
       kind: source.kind || 'text',
+      tier: source.tier || 'official',
       status: 'skipped',
       snippet: '',
     };
@@ -431,6 +534,7 @@ async function fetchResearchSource(source, deadlineMs) {
       url: source.url,
       title: source.title || source.url,
       kind: source.kind || 'text',
+      tier: source.tier || 'official',
       status: 'ok',
       snippet: summarizeFetchedText(text, source.kind),
     };
@@ -439,6 +543,7 @@ async function fetchResearchSource(source, deadlineMs) {
       url: source.url,
       title: source.title || source.url,
       kind: source.kind || 'text',
+      tier: source.tier || 'official',
       status: 'error',
       snippet: String(error?.message || 'Fetch failed.'),
     };
@@ -491,7 +596,8 @@ function limitSnippet(text) {
 
 function summarizeResearch(loader, version, build, evidence, completedInMs) {
   const successful = (evidence || []).filter(item => item.status === 'ok');
-  const scanned = successful.length;
+  const officialCount = successful.filter(item => item.tier !== 'community').length;
+  const communityCount = successful.filter(item => item.tier === 'community').length;
   const buildBits = [];
   if (build?.gradleVersion) buildBits.push(`Gradle ${build.gradleVersion}`);
   if (build?.loomVersion) buildBits.push(`Loom ${build.loomVersion}`);
@@ -499,7 +605,7 @@ function summarizeResearch(loader, version, build, evidence, completedInMs) {
   if (build?.yarnVersion) buildBits.push(`Yarn ${build.yarnVersion}`);
   if (build?.forgeVersion) buildBits.push(`Forge ${build.forgeVersion}`);
   if (build?.neoforgeVersion) buildBits.push(`NeoForge ${build.neoforgeVersion}`);
-  return `Deep research scanned ${scanned} official ${loader} sources for ${version} in ${Math.max(1, Math.round(completedInMs / 1000))}s.${buildBits.length ? ` Key versions: ${buildBits.join(', ')}.` : ''}`;
+  return `Deep research scanned ${officialCount} official and ${communityCount} community ${loader} sources for ${version} in ${Math.max(1, Math.round(completedInMs / 1000))}s.${buildBits.length ? ` Key versions: ${buildBits.join(', ')}.` : ''}`;
 }
 
 async function withCache(key, factory) {
