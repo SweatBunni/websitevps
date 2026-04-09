@@ -28,12 +28,13 @@ export async function requestStreamingChatCompletion({
   messages,
 }) {
   const model = body.model || process.env.OPENROUTER_MODEL || DEFAULT_MODEL;
+  const useStreaming = shouldUseStreaming(model);
   const requestBody = {
     model,
     messages,
     max_tokens: body.max_tokens || 4096,
     temperature: body.temperature ?? 0.2,
-    stream: true,
+    stream: useStreaming,
   };
 
   const MAX_CHAT_RETRIES = 4;
@@ -343,6 +344,13 @@ function extractNonStreamingText(payload) {
     || textFromValue(payload?.output_text)
     || ''
   );
+}
+
+function shouldUseStreaming(model) {
+  const value = String(model || '').toLowerCase();
+  if (!value) return true;
+  if (value.includes(':free')) return false;
+  return true;
 }
 
 function textFromValue(value) {
