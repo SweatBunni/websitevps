@@ -197,11 +197,26 @@ async function runGradleBuild(files, loader, version) {
       await fs.chmod(path.join(tempRoot, 'gradlew'), 0o755);
     }
 
+    const javaExecutable = path.join(
+      javaRuntime.binDir || path.join(javaRuntime.javaHome || '', 'bin'),
+      isWindows ? 'java.exe' : 'java',
+    );
+    const wrapperJar = path.join(tempRoot, 'gradle', 'wrapper', 'gradle-wrapper.jar');
+
     if (javaRuntime.javaHome) {
       const gradleJavaArg = `-Dorg.gradle.java.home=${javaRuntime.javaHome}`;
-      args = isWindows
-        ? ['/c', 'gradlew.bat', gradleJavaArg, 'build', '--stacktrace', '--console=plain', '--no-daemon']
-        : [gradleJavaArg, 'build', '--stacktrace', '--console=plain', '--no-daemon'];
+      command = javaExecutable;
+      args = [
+        gradleJavaArg,
+        '-Dorg.gradle.appname=gradlew',
+        '-classpath',
+        wrapperJar,
+        'org.gradle.wrapper.GradleWrapperMain',
+        'build',
+        '--stacktrace',
+        '--console=plain',
+        '--no-daemon',
+      ];
     }
 
     const execResult = await spawnWithOutput(command, args, {
