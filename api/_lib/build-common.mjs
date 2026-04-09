@@ -791,6 +791,16 @@ async function normalizeGeneratedFiles(files, loader, version, researchedBuild =
   const resolvedBuild = researchedBuild || await loadBuildResearch(loader, version);
   const needsFabricApi = loader === 'fabric' ? projectUsesFabricApi(files) : false;
 
+  if (loader === 'fabric') {
+    const settingsKey = Object.keys(files).find(key => key.replace(/\\/g, '/') === 'settings.gradle') || 'settings.gradle';
+    const existing = files[settingsKey] ? normalizeFileData(files[settingsKey]).content : '';
+    const cleaned = normalizeFabricSettingsGradle(existing);
+    if (!files[settingsKey] || cleaned !== existing) {
+      files[settingsKey] = { encoding: 'utf8', content: cleaned };
+      changedFiles.push(settingsKey);
+    }
+  }
+
   // Upgrade Gradle wrapper if it's too old to support the host JVM.
   // Gradle < 8.3 cannot run on Java 21 (class file major version 65).
   const wrapperPropsKey = Object.keys(files).find(
@@ -1112,6 +1122,24 @@ function normalizeFabricBuildGradle(content, version, researchedBuild = null, ne
     );
   }
   return next;
+}
+
+function normalizeFabricSettingsGradle(content) {
+  const raw = String(content || '').trim();
+  const projectNameMatch = raw.match(/rootProject\.name\s*=\s*['"]([^'"]+)['"]/);
+  const projectName = projectNameMatch ? projectNameMatch[1] : 'minecraftmod';
+  return `pluginManagement {
+    repositories {
+        maven {
+            name = 'Fabric'
+            url = 'https://maven.fabricmc.net/'
+        }
+        gradlePluginPortal()
+        mavenCentral()
+    }
+}
+
+rootProject.name = '${projectName}'`;
 }
 
 function getNormalizedFabricMappingMode(version, researchedBuild = null) {
