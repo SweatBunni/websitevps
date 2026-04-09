@@ -1,7 +1,7 @@
-// Edge runtime — no Vercel function timeout, streams directly to client
-export const config = { runtime: 'edge' };
+export const config = { runtime: 'nodejs' };
 
 import { getBuildResearch } from './_lib/research-metadata.mjs';
+import { rememberChatInteraction, retrieveRelevantMemories } from './_lib/site-memory.mjs';
 
 function errJson(msg, status = 500) {
   return new Response(JSON.stringify({ message: msg }), {
@@ -80,9 +80,24 @@ export default async function handler(req) {
     return errJson('A non-empty messages array is required.', 400);
 
   const model = body.model || process.env.MISTRAL_MODEL || 'codestral-latest';
+  const latestUserMessage = [...body.messages].reverse().find(message => message?.role === 'user')?.content || '';
+  const siteMemories = await retrieveRelevantMemories({
+    query: latestUserMessage,
+    loader: body.loader,
+    version: body.version,
+    type: 'chat',
+    limit: 3,
+  });
   const extra = await researchMsg(body.loader, body.version);
-  const messages = extra
-    ? [body.messages[0], extra, ...body.messages.slice(1)]
+  const memoryMessage = siteMemories.length
+    ? {
+        role: 'system',
+        content: `Relevant prior site memory:\n${siteMemories.map(memory => `- ${memory.text}`).join('\n')}\nUse these only as hints. Prefer the current prompt and researched metadata when they conflict.`,
+      }
+    : null;
+  const injectedMessages = [extra, memoryMessage].filter(Boolean);
+  const messages = injectedMessages.length
+    ? [body.messages[0], ...injectedMessages, ...body.messages.slice(1)]
     : body.messages;
 
   const upstream = await fetch('https://api.mistral.ai/v1/chat/completions', {
@@ -109,6 +124,7 @@ export default async function handler(req) {
 
   const enc = new TextEncoder();
   let usedModel = model;
+  let fullResponse = '';
 
   const { readable, writable } = new TransformStream();
   const writer = writable.getWriter();
@@ -133,12 +149,20 @@ export default async function handler(req) {
             if (c.model) usedModel = c.model;
             const delta = c.choices?.[0]?.delta?.content;
             if (delta) {
+              fullResponse += delta;
               await writer.write(enc.encode(`data: ${JSON.stringify({ delta, model: usedModel })}\n\n`));
             }
           } catch { /* skip malformed */ }
         }
       }
       await writer.write(enc.encode(`data: ${JSON.stringify({ done: true, model: usedModel })}\n\n`));
+      await rememberChatInteraction({
+        loader: body.loader,
+        version: body.version,
+        prompt: latestUserMessage,
+        response: fullResponse,
+        model: usedModel,
+      });
     } catch (e) {
       await writer.write(enc.encode(`data: ${JSON.stringify({ error: e.message })}\n\n`));
     } finally {

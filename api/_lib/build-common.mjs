@@ -6,8 +6,9 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { x as tarExtract } from 'tar';
 import { getBuildResearch } from './research-metadata.mjs';
+import { rememberBuildOutcome, retrieveRelevantMemories } from './site-memory.mjs';
 
-const MAX_BUILD_ATTEMPTS = 10;
+const MAX_BUILD_ATTEMPTS = 6;
 const MAX_REPAIR_ATTEMPTS_WITHOUT_PROGRESS = 3;
 const MAX_AI_REPAIR_RETRIES = 3;
 const BUILD_TIMEOUT_MS = 7 * 60 * 1000;   // 7 min per Gradle run — allows multiple attempts within server limit
@@ -37,6 +38,8 @@ export async function executeBuildJob({ apiKey, loader, version, modName, files,
   // detect a true dead-end where the AI keeps returning the same non-fix.
   let stuckRepairRounds = 0;
   let previousLogTail = null;
+  let previousRepairFingerprint = null;
+  let repeatedFailureSignatureRounds = 0;
 
   for (let attemptNumber = 1; attemptNumber <= MAX_BUILD_ATTEMPTS; attemptNumber += 1) {
     // Notify before the build starts so the client knows the worker is alive.
@@ -51,6 +54,7 @@ export async function executeBuildJob({ apiKey, loader, version, modName, files,
       command: buildResult.command,
       logTail: tail(buildResult.log, MAX_LOG_CHARS),
     };
+    attempt.failureSignature = extractBuildFailureSignature(attempt.logTail);
 
     attempts.push(attempt);
     await notifyAttempt(onAttempt, attempts, projectFiles);
@@ -67,6 +71,17 @@ export async function executeBuildJob({ apiKey, loader, version, modName, files,
     }
 
     if (buildResult.success) {
+      await rememberBuildOutcome({
+        loader,
+        version,
+        modName,
+        prompt: extractLatestPrompt(conversation),
+        success: true,
+        failureSignature: attempts.slice(-1)[0]?.failureSignature || '',
+        fixSummary: attempts.slice(-1)[0]?.fixSummary || '',
+        changedFiles: attempts.slice(-1)[0]?.changedFiles || [],
+        buildLog: attempt.logTail,
+      });
       return {
         success: true,
         attempts,
@@ -92,6 +107,11 @@ export async function executeBuildJob({ apiKey, loader, version, modName, files,
     // exact failure and its fix didn't help — count that as a stuck round.
     const logUnchanged = previousLogTail !== null && attempt.logTail === previousLogTail;
     previousLogTail = attempt.logTail;
+    if (attempt.failureSignature && attempts.length > 1 && attempts[attempts.length - 2]?.failureSignature === attempt.failureSignature) {
+      repeatedFailureSignatureRounds += 1;
+    } else {
+      repeatedFailureSignatureRounds = 0;
+    }
 
     // Request a repair. If the AI fails to respond, log it and try again next
     // round rather than aborting immediately.
@@ -116,6 +136,7 @@ export async function executeBuildJob({ apiKey, loader, version, modName, files,
         previousSummary: attempts.length > 1 ? (attempts[attempts.length - 2].fixSummary || '') : '',
         previousAttempts: attempts.slice(0, -1),
         researchedBuild,
+        failureSignature: attempt.failureSignature,
       });
     } catch (error) {
       // AI call failed (network, rate-limit after retries, etc.).  If it's a
@@ -152,6 +173,7 @@ export async function executeBuildJob({ apiKey, loader, version, modName, files,
 
     attempt.fixSummary = repair?.summary || 'Applied AI build fixes.';
     attempt.changedFiles = changedFiles;
+    attempt.repairFingerprint = buildRepairFingerprint(projectFiles, attempt.fixSummary, changedFiles);
     if (typeof onActivity === 'function') {
       await onActivity({
         message: changedFiles.length
@@ -162,8 +184,22 @@ export async function executeBuildJob({ apiKey, loader, version, modName, files,
     }
     await notifyAttempt(onAttempt, attempts, projectFiles);
 
-    if (changedFiles.length === 0 || logUnchanged) {
+    const repeatedFingerprint = previousRepairFingerprint && attempt.repairFingerprint === previousRepairFingerprint;
+    previousRepairFingerprint = attempt.repairFingerprint;
+
+    if (changedFiles.length === 0 || logUnchanged || repeatedFingerprint) {
       stuckRepairRounds += 1;
+      await rememberBuildOutcome({
+        loader,
+        version,
+        modName,
+        prompt: extractLatestPrompt(conversation),
+        success: false,
+        failureSignature: attempt.failureSignature,
+        fixSummary: attempt.fixSummary,
+        changedFiles,
+        buildLog: attempt.logTail,
+      });
       if (stuckRepairRounds >= MAX_REPAIR_ATTEMPTS_WITHOUT_PROGRESS) {
         return {
           success: false,
@@ -176,6 +212,16 @@ export async function executeBuildJob({ apiKey, loader, version, modName, files,
     } else {
       // Progress was made — reset the stuck counter.
       stuckRepairRounds = 0;
+    }
+
+    if (repeatedFailureSignatureRounds >= 2 && repeatedFingerprint) {
+      return {
+        success: false,
+        message: `Build repair stopped early because the same failure kept repeating after equivalent fixes. Last repair summary: ${attempt.fixSummary}.`,
+        attempts,
+        files: projectFiles,
+        buildLogTail: attempt.logTail,
+      };
     }
   }
 
@@ -414,12 +460,19 @@ function isRetryableAiStatus(status) {
   return status === 429 || status === 503 || status === 502 || status === 504;
 }
 
-async function requestBuildFix({ apiKey, loader, version, modName, conversation, files, buildLog, attemptNumber, requireConcreteChanges = false, previousSummary = '', previousAttempts = [], researchedBuild = null }) {
+async function requestBuildFix({ apiKey, loader, version, modName, conversation, files, buildLog, attemptNumber, requireConcreteChanges = false, previousSummary = '', previousAttempts = [], researchedBuild = null, failureSignature = '' }) {
   const repairFiles = collectRepairFiles(files, buildLog).map(({ path: filePath, content }) => ({
     path: filePath,
     content: truncateRepairFileContent(content, filePath),
   }));
   const trimmedBuildLog = tail(buildLog, MAX_REPAIR_LOG_CHARS);
+  const relevantMemories = await retrieveRelevantMemories({
+    query: `${failureSignature}\n${trimmedBuildLog}\n${extractLatestPrompt(conversation)}`,
+    loader,
+    version,
+    type: 'build',
+    limit: 3,
+  });
 
   // Build a concise history of what was already tried so the AI doesn't repeat itself.
   const attemptHistory = previousAttempts
@@ -447,6 +500,7 @@ async function requestBuildFix({ apiKey, loader, version, modName, conversation,
           'For Fabric Loom, do not add unsupported loom properties or blocks such as refreshVersions.',
           'Keep generated Gradle files close to the verified scaffold unless the build log clearly requires a script change.',
           researchedBuild ? `Researched build metadata for this target: ${JSON.stringify(researchedBuild)}` : '',
+          relevantMemories.length ? `Relevant prior site memory:\n${relevantMemories.map(memory => `- ${memory.text}`).join('\n')}` : '',
           buildRepairGuidance(loader, version),
           requireConcreteChanges
             ? 'Your previous repair attempt did not change any project files. You must change at least one relevant file if the build log is fixable.'
@@ -1225,6 +1279,44 @@ function tail(value, maxChars) {
   const text = String(value || '');
   if (text.length <= maxChars) return text;
   return text.slice(text.length - maxChars);
+}
+
+function extractBuildFailureSignature(log) {
+  const text = String(log || '');
+  const lines = text
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
+  const picked = [];
+
+  for (const line of lines) {
+    if (/^\*\s+What went wrong:/i.test(line) || /^\>\s/.test(line) || /error:/i.test(line) || /cannot find symbol/i.test(line) || /package .* does not exist/i.test(line)) {
+      picked.push(line.replace(/\s+/g, ' '));
+    }
+    if (picked.length >= 8) break;
+  }
+
+  return picked.join(' | ').slice(0, 1200);
+}
+
+function buildRepairFingerprint(files, summary, changedFiles) {
+  const selected = (Array.isArray(changedFiles) ? changedFiles : [])
+    .slice()
+    .sort()
+    .map(filePath => `${filePath}:${tail(normalizeFileData(files[filePath]).content, 240)}`);
+  return `${summary || ''}\n${selected.join('\n')}`;
+}
+
+function extractLatestPrompt(conversation) {
+  const entries = Array.isArray(conversation) ? [...conversation].reverse() : [];
+  for (const entry of entries) {
+    if (entry?.role !== 'user') continue;
+    const content = String(entry.content || '').trim();
+    if (!content) continue;
+    const marker = '[User request]';
+    return content.includes(marker) ? content.split(marker).pop().trim() : content;
+  }
+  return '';
 }
 
 function getRequiredJavaVersion(loader, version) {
