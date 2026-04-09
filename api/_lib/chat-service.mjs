@@ -1,7 +1,7 @@
 import { getBuildResearch } from './research-metadata.mjs';
 import { rememberChatInteraction, retrieveRelevantMemories } from './site-memory.mjs';
 
-const DEFAULT_MODEL = 'qwen/qwen3.6-plus';
+const DEFAULT_MODEL = 'qwen/qwen2.5-coder';
 const UPSTREAM_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 export async function buildChatMessages({ messages, loader, version }) {
