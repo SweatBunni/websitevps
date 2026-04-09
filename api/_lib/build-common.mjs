@@ -533,6 +533,7 @@ async function requestBuildFix({ apiKey, loader, version, modName, conversation,
           'If Java imports or APIs are wrong, fix those files.',
           'For Fabric Loom, do not add unsupported loom properties or blocks such as refreshVersions.',
           'For Fabric Loom, accessWidener must ONLY appear inside loom { accessWidenerPath = file("...") }. Never use bare accessWidener = "..." or accessWidener "..." assignments outside the loom block — they cause "Cannot set the property accessWidener because the backing field is final". If the build log shows this error, move the declaration into the loom block or remove it.',
+          'Never add systemProp.* keys to gradle.properties unless they are real, well-known Java/Gradle system properties (e.g. systemProp.https.proxyHost). Do not invent recursive or deeply-nested systemProp keys. The only valid top-level gradle.properties keys are org.gradle.* settings and mod-specific short keys like minecraft_version, loader_version, yarn_mappings, fabric_version, mod_version, maven_group, archives_base_name.',
           'Keep generated Gradle files close to the verified scaffold unless the build log clearly requires a script change.',
           researchedBuild ? `Researched build metadata for this target: ${JSON.stringify(researchedBuild)}` : '',
           formatResearchPromptContext(researchBundle),
@@ -849,6 +850,15 @@ async function normalizeGeneratedFiles(files, loader, version, researchedBuild =
     if (cleaned !== normalized.content) {
       files['gradle.properties'] = { encoding: 'utf8', content: cleaned };
       changedFiles.push('gradle.properties');
+    }
+  }
+  // For all loaders, strip hallucinated systemProp keys from gradle.properties
+  if (loader !== 'fabric' && files['gradle.properties']) {
+    const normalized = normalizeFileData(files['gradle.properties']);
+    const cleaned = sanitizeGradleProperties(normalized.content);
+    if (cleaned !== normalized.content) {
+      files['gradle.properties'] = { encoding: 'utf8', content: cleaned };
+      if (!changedFiles.includes('gradle.properties')) changedFiles.push('gradle.properties');
     }
   }
   if (loader === 'fabric') {
@@ -1181,8 +1191,49 @@ function getFabricYarnFallback(version) {
   return null;
 }
 
+// Strip hallucinated / garbage lines from gradle.properties.
+// The AI sometimes generates recursive systemProp keys that repeat a suffix
+// hundreds of times (e.g. systemProp.org.gradle.daemon.performance.enable…Timeout=1000
+// appended to itself forever). We remove any systemProp key whose name exceeds a
+// reasonable length, and any systemProp key that is not a known valid Gradle property.
+const VALID_SYSTEM_PROP_PREFIXES = [
+  'systemProp.https.',
+  'systemProp.http.',
+  'systemProp.file.encoding',
+  'systemProp.sun.',
+  'systemProp.java.',
+  'systemProp.javax.',
+  'systemProp.jdk.',
+  'systemProp.socks',
+  'systemProp.socksProxy',
+  'systemProp.proxyHost',
+  'systemProp.proxyPort',
+  'systemProp.nonProxyHosts',
+];
+function sanitizeGradleProperties(content) {
+  return String(content || '').split(/\r?\n/).filter(line => {
+    const trimmed = line.trim();
+    // Keep blank lines and comments
+    if (!trimmed || trimmed.startsWith('#')) return true;
+    // Keep standard well-known org.gradle.* keys
+    if (/^org\.gradle\./.test(trimmed)) return true;
+    // Keep mod-specific properties (short alphanumeric keys)
+    if (/^[a-zA-Z_][a-zA-Z0-9_.]*\s*=/.test(trimmed)) {
+      const key = trimmed.split('=')[0].trim();
+      // Reject any key longer than 80 characters — these are always hallucinated
+      if (key.length > 80) return false;
+      // Reject systemProp keys that don't match known valid prefixes
+      if (key.startsWith('systemProp.')) {
+        return VALID_SYSTEM_PROP_PREFIXES.some(prefix => key.startsWith(prefix));
+      }
+      return true;
+    }
+    return true;
+  }).join('\n');
+}
+
 function normalizeFabricGradleProperties(content, version, researchedBuild = null, needsFabricApi = false) {
-  let next = String(content || '');
+  let next = sanitizeGradleProperties(content);
   next = next.replace(/^\s*yarn_mappings=.*(?:\r?\n|$)/gm, '');
   if (!isFabricNonObfuscatedVersion(version)) {
     const validYarn = isValidYarnVersion(researchedBuild?.yarnVersion)
