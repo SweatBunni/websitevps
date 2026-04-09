@@ -419,6 +419,7 @@ async function requestBuildFix({ apiKey, loader, version, modName, conversation,
           'If a build script is wrong, fix the build script.',
           'If Java imports or APIs are wrong, fix those files.',
           'For Fabric Loom, do not add unsupported loom properties or blocks such as refreshVersions.',
+          'Fabric Loom must be version 1.7.x or newer (never use SNAPSHOT versions). Gradle must be 8.3–8.x (never Gradle 9.x — it broke the Loom Problems API). If the build.gradle has an old or SNAPSHOT loom version, replace it with 1.7.4. If the gradle-wrapper.properties points to Gradle 9.x, downgrade it to 8.8.1.',
           'Keep generated Gradle files close to the verified scaffold unless the build log clearly requires a script change.',
           buildRepairGuidance(loader, version),
           requireConcreteChanges
@@ -606,11 +607,25 @@ function applyFileUpdates(files, updates, loader, version) {
   return changedFiles;
 }
 
-function upgradeGradleWrapperIfNeeded(content) {
-  // Gradle 8.1.1 and earlier do not support Java 21 (class file major version 65).
-  // Upgrade any Gradle < 8.3 to 8.8.1, which supports Java 21 and Java 23+.
-  const MIN_JAVA21_GRADLE = [8, 3];
-  const SAFE_GRADLE = '8.8.1';
+// Gradle version compatibility matrix:
+// - Gradle < 8.3: no Java 21 support
+// - Gradle 8.3–8.x: Java 21 supported; compatible with Fabric Loom 1.x and ForgeGradle 6.x
+// - Gradle 9.x: broke Fabric Loom 1.x Problems API (forNamespace removed), ForgeGradle not yet compatible
+//
+// Safe pinned version for each loader:
+const GRADLE_SAFE_VERSION = {
+  fabric:   '8.8.1',  // Loom 1.7+ requires 8.8+; Loom 1.6-SNAPSHOT needs exactly 8.x; 9.x broke Problems API
+  forge:    '8.8.1',  // ForgeGradle 6.x is not Gradle 9 compatible
+  neoforge: '8.8.1',  // NeoGradle also not Gradle 9 compatible yet
+  paper:    '8.8.1',  // Safe default
+  spigot:   '8.8.1',
+  default:  '8.8.1',
+};
+const GRADLE_MIN_VERSION = [8, 3]; // Minimum for Java 21 support
+const GRADLE_MAX_VERSION = [8, 99]; // Never go to Gradle 9.x until plugins catch up
+
+function normalizeGradleWrapper(content, loader) {
+  const safeVersion = GRADLE_SAFE_VERSION[loader] || GRADLE_SAFE_VERSION.default;
 
   return String(content || '').replace(
     /(distributionUrl\s*=\s*https\\:\/\/services\.gradle\.org\/distributions\/gradle-)(\d+\.\d+(?:\.\d+)?)(-.+)/,
@@ -618,15 +633,26 @@ function upgradeGradleWrapperIfNeeded(content) {
       const parts = ver.split('.').map(Number);
       const major = parts[0] || 0;
       const minor = parts[1] || 0;
+
       const tooOld =
-        major < MIN_JAVA21_GRADLE[0] ||
-        (major === MIN_JAVA21_GRADLE[0] && minor < MIN_JAVA21_GRADLE[1]);
-      if (tooOld) {
-        return `${prefix}${SAFE_GRADLE}${suffix}`;
+        major < GRADLE_MIN_VERSION[0] ||
+        (major === GRADLE_MIN_VERSION[0] && minor < GRADLE_MIN_VERSION[1]);
+
+      const tooNew =
+        major > GRADLE_MAX_VERSION[0] ||
+        (major === GRADLE_MAX_VERSION[0] && minor > GRADLE_MAX_VERSION[1]);
+
+      if (tooOld || tooNew) {
+        return `${prefix}${safeVersion}${suffix}`;
       }
       return match;
     }
   );
+}
+
+// Keep old name as alias so nothing else breaks
+function upgradeGradleWrapperIfNeeded(content) {
+  return normalizeGradleWrapper(content, 'default');
 }
 
 function normalizeGeneratedFiles(files, loader, version) {
@@ -639,10 +665,21 @@ function normalizeGeneratedFiles(files, loader, version) {
   );
   if (wrapperPropsKey) {
     const normalized = normalizeFileData(files[wrapperPropsKey]);
-    const upgraded = upgradeGradleWrapperIfNeeded(normalized.content);
+    const upgraded = normalizeGradleWrapper(normalized.content, loader);
     if (upgraded !== normalized.content) {
       files[wrapperPropsKey] = { encoding: 'utf8', content: upgraded };
       changedFiles.push(wrapperPropsKey);
+    }
+  }
+
+  // Fix Fabric Loom plugin version in build.gradle — SNAPSHOT versions and
+  // anything older than 1.7 are incompatible with Gradle 8.8+ Problems API.
+  if (loader === 'fabric' && files['build.gradle']) {
+    const normalized = normalizeFileData(files['build.gradle']);
+    const fixed = normalizeFabricLoomPluginVersion(normalized.content);
+    if (fixed !== normalized.content) {
+      files['build.gradle'] = { encoding: 'utf8', content: fixed };
+      if (!changedFiles.includes('build.gradle')) changedFiles.push('build.gradle');
     }
   }
 
@@ -769,6 +806,40 @@ function normalizeForgeJavaSource(content, version) {
   if (/IEventBus/.test(next)) {
     next = ensureImport(next, 'net.minecraftforge.eventbus.api.IEventBus');
   }
+
+  return next;
+}
+
+// Fabric Loom version compatibility:
+// Loom 1.6-SNAPSHOT and older use Problems.forNamespace() which was removed/changed in Gradle 8.8+/9.x.
+// Loom 1.7.x is the first stable release that works with Gradle 8.8.
+// Always pin to a known-stable non-SNAPSHOT version.
+const LOOM_SAFE_VERSION = '1.7.4';
+
+function normalizeFabricLoomPluginVersion(content) {
+  let next = String(content || '');
+
+  // Replace any loom version that is a SNAPSHOT, or older than 1.7, with the safe version.
+  // Matches: id 'fabric-loom' version '1.6-SNAPSHOT'
+  //          id 'net.fabricmc.fabric-loom' version '1.6-SNAPSHOT'
+  //          id("net.fabricmc.fabric-loom") version "1.5.3"
+  next = next.replace(
+    /(id\s*[\("'](?:fabric-loom|net\.fabricmc\.fabric-loom)[\)"']\s+version\s+[\("'])([^"'\s)]+)([\)"'])/g,
+    (match, prefix, ver, suffix) => {
+      // Always replace SNAPSHOTs
+      if (/-SNAPSHOT/i.test(ver)) {
+        return `${prefix}${LOOM_SAFE_VERSION}${suffix}`;
+      }
+      // Replace versions older than 1.7
+      const parts = ver.split('.').map(Number);
+      const major = parts[0] || 0;
+      const minor = parts[1] || 0;
+      if (major < 1 || (major === 1 && minor < 7)) {
+        return `${prefix}${LOOM_SAFE_VERSION}${suffix}`;
+      }
+      return match;
+    }
+  );
 
   return next;
 }
