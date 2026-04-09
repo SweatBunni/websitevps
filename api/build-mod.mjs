@@ -1,48 +1,49 @@
 import crypto from 'node:crypto';
 import { sanitizeFiles } from './_lib/sanitize-files.mjs';
 import { putJson, putStatus, getBlobAccess, hasBlobToken } from './_lib/build-store.mjs';
-import { getMissingProjectFiles } from './_lib/build-contract.mjs';
-import { jsonResponse, methodNotAllowed, parseJsonRequest } from './_lib/http-utils.mjs';
+
+function json(body, init = {}) {
+  return Response.json(body, {
+    status: init.status || 200,
+    headers: {
+      'Cache-Control': 'no-store',
+      ...(init.headers || {}),
+    },
+  });
+}
 
 export default async function handler(request) {
   if (request.method !== 'POST') {
-    return methodNotAllowed();
+    return json({ message: 'Method not allowed.' }, { status: 405 });
   }
 
   if (!hasBlobToken()) {
-    return jsonResponse({
+    return json({
       message: 'Server is missing BLOB_READ_WRITE_TOKEN. Add Vercel Blob storage to this project.',
     }, { status: 500 });
   }
 
-  const parsed = await parseJsonRequest(request);
-  if (!parsed.ok) {
-    return parsed.response;
+  let payload;
+  try {
+    payload = await request.json();
+  } catch {
+    return json({ message: 'Invalid JSON body.' }, { status: 400 });
   }
 
-  const payload = parsed.value || {};
   const loader = typeof payload.loader === 'string' ? payload.loader : '';
   const version = typeof payload.version === 'string' ? payload.version : '';
   const modName = typeof payload.modName === 'string' ? payload.modName : 'MinecraftMod';
   const conversation = Array.isArray(payload.conversation) ? payload.conversation : [];
 
   if (!loader || !version || !payload.files || typeof payload.files !== 'object') {
-    return jsonResponse({ message: 'loader, version, and a files object are required.' }, { status: 400 });
+    return json({ message: 'loader, version, and a files object are required.' }, { status: 400 });
   }
 
   let files;
   try {
     files = sanitizeFiles(payload.files);
   } catch (error) {
-    return jsonResponse({ message: error.message }, { status: 400 });
-  }
-
-  const missingFiles = getMissingProjectFiles(loader, files);
-  if (missingFiles.length) {
-    return jsonResponse({
-      message: `The AI response did not include the required project files for ${loader} ${version}: ${missingFiles.join(', ')}`,
-      missingFiles,
-    }, { status: 400 });
+    return json({ message: error.message }, { status: 400 });
   }
 
   const jobId = crypto.randomUUID();
@@ -66,18 +67,16 @@ export default async function handler(request) {
       version,
       modName,
       attempts: [],
-      activityLog: [{ time: now, message: 'Build job queued and waiting for worker pickup.' }],
       createdAt: now,
       updatedAt: now,
       provider: 'vercel',
     });
   } catch (error) {
-    return jsonResponse({
+    return json({
       message: `Blob storage write failed (${getBlobAccess()} store mode): ${error.message || 'unknown error'}`,
     }, { status: 500 });
   }
-
-  return jsonResponse({
+  return json({
     jobId,
     status: 'queued',
     provider: 'vercel',

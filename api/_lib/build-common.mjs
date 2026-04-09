@@ -5,18 +5,8 @@ import { spawn } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { x as tarExtract } from 'tar';
-import { getBuildResearch, getDeepBuildResearch, getAutonomousRepairResearch } from './research-metadata.mjs';
-import {
-  sanitizeFiles as sanitizeProjectFiles,
-  tail as tailText,
-  extractBuildFailureSignature as extractFailureSignature,
-  buildRepairFingerprint as createRepairFingerprint,
-  extractLatestPrompt as extractConversationPrompt,
-} from './build-file-utils.mjs';
-import { normalizeGeneratedFiles as normalizeProjectFiles } from './build-normalization.mjs';
-import { rememberBuildOutcome, rememberResearchBundle, retrieveRelevantMemories } from './site-memory.mjs';
 
-const MAX_BUILD_ATTEMPTS = 6;
+const MAX_BUILD_ATTEMPTS = 10;
 const MAX_REPAIR_ATTEMPTS_WITHOUT_PROGRESS = 3;
 const MAX_AI_REPAIR_RETRIES = 3;
 const BUILD_TIMEOUT_MS = 7 * 60 * 1000;   // 7 min per Gradle run — allows multiple attempts within server limit
@@ -28,30 +18,15 @@ const JAVA_DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
 const JAVA_EXTRACT_TIMEOUT_MS = 2 * 60 * 1000;
 const javaRuntimeCache = new Map();
 
-export async function executeBuildJob({ apiKey, loader, version, modName, files, conversation, onAttempt, onBuildStart, onActivity, researchBundle: preloadedResearch = null }) {
-  const projectFiles = sanitizeProjectFiles(files);
-  const researchBundle = await loadBuildResearchBundle(loader, version, preloadedResearch);
-  const researchedBuild = researchBundle?.build || null;
-  if (typeof onActivity === 'function') {
-    await onActivity({
-      message: researchBundle?.summary
-        ? researchBundle.summary
-        : researchedBuild
-        ? `Researched official build metadata for ${loader} ${version}.`
-        : `Fell back to local build defaults for ${loader} ${version}.`,
-      buildResearch: researchBundle || researchedBuild,
-    }).catch(() => {});
-  }
-  await normalizeProjectFiles(projectFiles, loader, version, researchedBuild);
+export async function executeBuildJob({ apiKey, loader, version, modName, files, conversation, onAttempt, onBuildStart }) {
+  const projectFiles = sanitizeFiles(files);
+  normalizeGeneratedFiles(projectFiles, loader, version);
   const attempts = [];
 
   // Track consecutive repair rounds that produced no file changes, so we can
   // detect a true dead-end where the AI keeps returning the same non-fix.
   let stuckRepairRounds = 0;
   let previousLogTail = null;
-  let previousRepairFingerprint = null;
-  let previousRepairSummary = null;
-  let repeatedFailureSignatureRounds = 0;
 
   for (let attemptNumber = 1; attemptNumber <= MAX_BUILD_ATTEMPTS; attemptNumber += 1) {
     // Notify before the build starts so the client knows the worker is alive.
@@ -64,9 +39,8 @@ export async function executeBuildJob({ apiKey, loader, version, modName, files,
       success: buildResult.success,
       exitCode: buildResult.exitCode,
       command: buildResult.command,
-      logTail: tailText(buildResult.log, MAX_LOG_CHARS),
+      logTail: tail(buildResult.log, MAX_LOG_CHARS),
     };
-    attempt.failureSignature = extractFailureSignature(attempt.logTail);
 
     attempts.push(attempt);
     await notifyAttempt(onAttempt, attempts, projectFiles);
@@ -83,17 +57,6 @@ export async function executeBuildJob({ apiKey, loader, version, modName, files,
     }
 
     if (buildResult.success) {
-      await rememberBuildOutcome({
-        loader,
-        version,
-        modName,
-        prompt: extractConversationPrompt(conversation),
-        success: true,
-        failureSignature: attempts.slice(-1)[0]?.failureSignature || '',
-        fixSummary: attempts.slice(-1)[0]?.fixSummary || '',
-        changedFiles: attempts.slice(-1)[0]?.changedFiles || [],
-        buildLog: attempt.logTail,
-      });
       return {
         success: true,
         attempts,
@@ -119,22 +82,11 @@ export async function executeBuildJob({ apiKey, loader, version, modName, files,
     // exact failure and its fix didn't help — count that as a stuck round.
     const logUnchanged = previousLogTail !== null && attempt.logTail === previousLogTail;
     previousLogTail = attempt.logTail;
-    if (attempt.failureSignature && attempts.length > 1 && attempts[attempts.length - 2]?.failureSignature === attempt.failureSignature) {
-      repeatedFailureSignatureRounds += 1;
-    } else {
-      repeatedFailureSignatureRounds = 0;
-    }
 
     // Request a repair. If the AI fails to respond, log it and try again next
     // round rather than aborting immediately.
     let repair = null;
     try {
-      if (typeof onActivity === 'function') {
-        await onActivity({
-          message: `Researching the build failure and asking the AI to repair attempt ${attemptNumber}.`,
-          buildResearch: researchBundle || researchedBuild,
-        }).catch(() => {});
-      }
       repair = await requestBuildFix({
         apiKey,
         loader,
@@ -147,9 +99,6 @@ export async function executeBuildJob({ apiKey, loader, version, modName, files,
         requireConcreteChanges: stuckRepairRounds > 0,
         previousSummary: attempts.length > 1 ? (attempts[attempts.length - 2].fixSummary || '') : '',
         previousAttempts: attempts.slice(0, -1),
-        researchedBuild,
-        researchBundle,
-        failureSignature: attempt.failureSignature,
       });
     } catch (error) {
       // AI call failed (network, rate-limit after retries, etc.).  If it's a
@@ -181,40 +130,15 @@ export async function executeBuildJob({ apiKey, loader, version, modName, files,
 
     // Apply whatever files the AI returned (may be empty).
     const changedFiles = (repair && Array.isArray(repair.files) && repair.files.length > 0)
-      ? await applyFileUpdates(projectFiles, repair.files, loader, version, researchedBuild)
+      ? applyFileUpdates(projectFiles, repair.files, loader, version)
       : [];
 
     attempt.fixSummary = repair?.summary || 'Applied AI build fixes.';
     attempt.changedFiles = changedFiles;
-    attempt.repairFingerprint = createRepairFingerprint(projectFiles, attempt.fixSummary, changedFiles);
-    if (typeof onActivity === 'function') {
-      await onActivity({
-        message: changedFiles.length
-          ? `${attempt.fixSummary} (${changedFiles.length} file${changedFiles.length === 1 ? '' : 's'} changed).`
-          : `AI repair produced no file changes on attempt ${attemptNumber}.`,
-        buildResearch: researchBundle || researchedBuild,
-      }).catch(() => {});
-    }
     await notifyAttempt(onAttempt, attempts, projectFiles);
 
-    const repeatedFingerprint = previousRepairFingerprint && attempt.repairFingerprint === previousRepairFingerprint;
-    const repeatedSummary = previousRepairSummary !== null && attempt.fixSummary === previousRepairSummary;
-    previousRepairFingerprint = attempt.repairFingerprint;
-    previousRepairSummary = attempt.fixSummary;
-
-    if (changedFiles.length === 0 || logUnchanged || repeatedFingerprint) {
+    if (changedFiles.length === 0 || logUnchanged) {
       stuckRepairRounds += 1;
-      await rememberBuildOutcome({
-        loader,
-        version,
-        modName,
-        prompt: extractConversationPrompt(conversation),
-        success: false,
-        failureSignature: attempt.failureSignature,
-        fixSummary: attempt.fixSummary,
-        changedFiles,
-        buildLog: attempt.logTail,
-      });
       if (stuckRepairRounds >= MAX_REPAIR_ATTEMPTS_WITHOUT_PROGRESS) {
         return {
           success: false,
@@ -224,29 +148,9 @@ export async function executeBuildJob({ apiKey, loader, version, modName, files,
           buildLogTail: attempt.logTail,
         };
       }
-      } else {
-        // Progress was made — reset the stuck counter.
-        stuckRepairRounds = 0;
-      }
-
-    if (repeatedFailureSignatureRounds >= 1 && repeatedSummary && changedFiles.length === 0) {
-      return {
-        success: false,
-        message: `Build repair stopped early because the same failure repeated and the AI returned the same repair summary without changing files. Last repair summary: ${attempt.fixSummary}.`,
-        attempts,
-        files: projectFiles,
-        buildLogTail: attempt.logTail,
-      };
-    }
-
-    if (repeatedFailureSignatureRounds >= 2 && repeatedFingerprint) {
-      return {
-        success: false,
-        message: `Build repair stopped early because the same failure kept repeating after equivalent fixes. Last repair summary: ${attempt.fixSummary}.`,
-        attempts,
-        files: projectFiles,
-        buildLogTail: attempt.logTail,
-      };
+    } else {
+      // Progress was made — reset the stuck counter.
+      stuckRepairRounds = 0;
     }
   }
 
@@ -485,28 +389,12 @@ function isRetryableAiStatus(status) {
   return status === 429 || status === 503 || status === 502 || status === 504;
 }
 
-async function requestBuildFix({ apiKey, loader, version, modName, conversation, files, buildLog, attemptNumber, requireConcreteChanges = false, previousSummary = '', previousAttempts = [], researchedBuild = null, researchBundle = null, failureSignature = '' }) {
+async function requestBuildFix({ apiKey, loader, version, modName, conversation, files, buildLog, attemptNumber, requireConcreteChanges = false, previousSummary = '', previousAttempts = [] }) {
   const repairFiles = collectRepairFiles(files, buildLog).map(({ path: filePath, content }) => ({
     path: filePath,
     content: truncateRepairFileContent(content, filePath),
   }));
-  const trimmedBuildLog = tailText(buildLog, MAX_REPAIR_LOG_CHARS);
-  const autonomousResearch = await loadAutonomousRepairResearch({
-    loader,
-    version,
-    failureSignature,
-    buildLog: trimmedBuildLog,
-    prompt: extractConversationPrompt(conversation),
-  });
-  const relevantMemories = loader === 'fabric' && isFabricNonObfuscatedVersion(version)
-    ? []
-    : await retrieveRelevantMemories({
-        query: `${failureSignature}\n${trimmedBuildLog}\n${extractConversationPrompt(conversation)}`,
-        loader,
-        version,
-        type: 'build',
-        limit: 3,
-      });
+  const trimmedBuildLog = tail(buildLog, MAX_REPAIR_LOG_CHARS);
 
   // Build a concise history of what was already tried so the AI doesn't repeat itself.
   const attemptHistory = previousAttempts
@@ -528,15 +416,12 @@ async function requestBuildFix({ apiKey, loader, version, modName, conversation,
           'Only include files that must be replaced.',
           'Use valid code for the exact loader and version.',
           'Do not invent libraries, mappings, classes, events, or plugin versions.',
-          'Research exact version numbers from official sources before changing wrappers, plugins, mappings, or dependencies. Never guess a Gradle distribution version.',
           'If a build script is wrong, fix the build script.',
           'If Java imports or APIs are wrong, fix those files.',
           'For Fabric Loom, do not add unsupported loom properties or blocks such as refreshVersions.',
+          'For Fabric Loom, NEVER place accessWidener or accessWidenerPath inside a dependencies {} block — the DependencyHandler backing field is final and will throw "Cannot set the property accessWidener because the backing field is final". Always put it inside a loom {} block as: loom { accessWidenerPath = file("src/main/resources/modid.accesswidener") }',
+          'Fabric Loom must be version 1.7.x or newer (never use SNAPSHOT versions). Gradle must be 8.3–8.x (never Gradle 9.x — it broke the Loom Problems API). If the build.gradle has an old or SNAPSHOT loom version, replace it with 1.7.4. If the gradle-wrapper.properties points to Gradle 9.x, downgrade it to 8.14.1.',
           'Keep generated Gradle files close to the verified scaffold unless the build log clearly requires a script change.',
-          researchedBuild ? `Researched build metadata for this target: ${JSON.stringify(researchedBuild)}` : '',
-          formatResearchPromptContext(researchBundle),
-          formatAutonomousResearchContext(autonomousResearch),
-          relevantMemories.length ? `Relevant prior site memory:\n${relevantMemories.map(memory => `- ${memory.text}`).join('\n')}` : '',
           buildRepairGuidance(loader, version),
           requireConcreteChanges
             ? 'Your previous repair attempt did not change any project files. You must change at least one relevant file if the build log is fixable.'
@@ -703,7 +588,7 @@ function collectRepairFiles(files, buildLog) {
   return selected.slice(0, MAX_REPAIR_FILE_COUNT);
 }
 
-async function applyFileUpdates(files, updates, loader, version, researchedBuild = null) {
+function applyFileUpdates(files, updates, loader, version) {
   const changedFiles = [];
   for (const update of updates) {
     const relativePath = sanitizeRelativePath(update.path);
@@ -714,7 +599,7 @@ async function applyFileUpdates(files, updates, loader, version, researchedBuild
       changedFiles.push(relativePath);
     }
   }
-  const normalizedPaths = await normalizeProjectFiles(files, loader, version, researchedBuild);
+  const normalizedPaths = normalizeGeneratedFiles(files, loader, version);
   normalizedPaths.forEach(relativePath => {
     if (!changedFiles.includes(relativePath)) {
       changedFiles.push(relativePath);
@@ -730,23 +615,23 @@ async function applyFileUpdates(files, updates, loader, version, researchedBuild
 //
 // Safe pinned version for each loader:
 const GRADLE_SAFE_VERSION = {
-  fabric:   '9.3.0',
-  forge:    '8.12.1',
-  neoforge: '8.12.1',
-  paper:    '8.12.1',
-  spigot:   '8.12.1',
-  default:  '8.12.1',
+  fabric:   '8.14.1',  // Loom 1.7+ requires 8.8+; Loom 1.6-SNAPSHOT needs exactly 8.x; 9.x broke Problems API
+  forge:    '8.14.1',  // ForgeGradle 6.x is not Gradle 9 compatible
+  neoforge: '8.14.1',  // NeoGradle also not Gradle 9 compatible yet
+  paper:    '8.14.1',  // Safe default
+  spigot:   '8.14.1',
+  default:  '8.14.1',
 };
 const GRADLE_MIN_VERSION = [8, 3]; // Minimum for Java 21 support
 const GRADLE_MAX_VERSION = [8, 99]; // Never go to Gradle 9.x until plugins catch up
 
-function normalizeGradleWrapper(content, loader, researchedBuild = null) {
-  const safeVersion = researchedBuild?.gradleVersion || GRADLE_SAFE_VERSION[loader] || GRADLE_SAFE_VERSION.default;
+function normalizeGradleWrapper(content, loader) {
+  const safeVersion = GRADLE_SAFE_VERSION[loader] || GRADLE_SAFE_VERSION.default;
 
   return String(content || '').replace(
-    /(distributionUrl\s*=\s*https\\:\/\/services\.gradle\.org\/distributions\/gradle-)(.+?)(-(?:bin|all)\.zip)/,
+    /(distributionUrl\s*=\s*https\\:\/\/services\.gradle\.org\/distributions\/gradle-)(\d+\.\d+(?:\.\d+)?)(-.+)/,
     (match, prefix, ver, suffix) => {
-      const parts = String(ver).split(/[^0-9]+/).filter(Boolean).map(Number);
+      const parts = ver.split('.').map(Number);
       const major = parts[0] || 0;
       const minor = parts[1] || 0;
 
@@ -755,12 +640,10 @@ function normalizeGradleWrapper(content, loader, researchedBuild = null) {
         (major === GRADLE_MIN_VERSION[0] && minor < GRADLE_MIN_VERSION[1]);
 
       const tooNew =
-        loader !== 'fabric' && (
-          major > GRADLE_MAX_VERSION[0] ||
-          (major === GRADLE_MAX_VERSION[0] && minor > GRADLE_MAX_VERSION[1])
-        );
+        major > GRADLE_MAX_VERSION[0] ||
+        (major === GRADLE_MAX_VERSION[0] && minor > GRADLE_MAX_VERSION[1]);
 
-      if (tooOld || tooNew || String(ver) !== safeVersion) {
+      if (tooOld || tooNew) {
         return `${prefix}${safeVersion}${suffix}`;
       }
       return match;
@@ -773,41 +656,8 @@ function upgradeGradleWrapperIfNeeded(content) {
   return normalizeGradleWrapper(content, 'default');
 }
 
-async function loadAutonomousRepairResearch({ loader, version, failureSignature, buildLog, prompt }) {
-  try {
-    const bundle = await getAutonomousRepairResearch(loader, version, {
-      errorText: [failureSignature, buildLog].filter(Boolean).join('\n'),
-      prompt,
-      timeBudgetMs: 45000,
-    });
-    await rememberResearchBundle({
-      loader,
-      version,
-      query: bundle.query,
-      summary: bundle.summary,
-      sources: bundle.sources,
-      errorText: bundle.errorText,
-    });
-    return bundle;
-  } catch {
-    return null;
-  }
-}
-
-async function normalizeGeneratedFiles(files, loader, version, researchedBuild = null) {
+function normalizeGeneratedFiles(files, loader, version) {
   const changedFiles = [];
-  const resolvedBuild = researchedBuild || await loadBuildResearch(loader, version);
-  const needsFabricApi = loader === 'fabric' ? projectUsesFabricApi(files) : false;
-
-  if (loader === 'fabric') {
-    const settingsKey = Object.keys(files).find(key => key.replace(/\\/g, '/') === 'settings.gradle') || 'settings.gradle';
-    const existing = files[settingsKey] ? normalizeFileData(files[settingsKey]).content : '';
-    const cleaned = normalizeFabricSettingsGradle(existing);
-    if (!files[settingsKey] || cleaned !== existing) {
-      files[settingsKey] = { encoding: 'utf8', content: cleaned };
-      changedFiles.push(settingsKey);
-    }
-  }
 
   // Upgrade Gradle wrapper if it's too old to support the host JVM.
   // Gradle < 8.3 cannot run on Java 21 (class file major version 65).
@@ -816,7 +666,7 @@ async function normalizeGeneratedFiles(files, loader, version, researchedBuild =
   );
   if (wrapperPropsKey) {
     const normalized = normalizeFileData(files[wrapperPropsKey]);
-    const upgraded = normalizeGradleWrapper(normalized.content, loader, resolvedBuild);
+    const upgraded = normalizeGradleWrapper(normalized.content, loader);
     if (upgraded !== normalized.content) {
       files[wrapperPropsKey] = { encoding: 'utf8', content: upgraded };
       changedFiles.push(wrapperPropsKey);
@@ -836,42 +686,16 @@ async function normalizeGeneratedFiles(files, loader, version, researchedBuild =
 
   if (loader === 'fabric' && files['build.gradle']) {
     const normalized = normalizeFileData(files['build.gradle']);
-    const cleaned = normalizeFabricBuildGradle(stripUnsupportedFabricLoomSettings(normalized.content, version), version, resolvedBuild, needsFabricApi);
+    const accessWidenerFixed = fixAccessWidenerPlacement(normalized.content);
+    const cleaned = normalizeFabricBuildGradle(stripUnsupportedFabricLoomSettings(accessWidenerFixed, version), version);
     if (cleaned !== normalized.content) {
       files['build.gradle'] = { encoding: 'utf8', content: cleaned };
       changedFiles.push('build.gradle');
-    }
-  }
-  if (loader === 'fabric' && files['gradle.properties']) {
-    const normalized = normalizeFileData(files['gradle.properties']);
-    const cleaned = normalizeFabricGradleProperties(normalized.content, version, resolvedBuild, needsFabricApi);
-    if (cleaned !== normalized.content) {
-      files['gradle.properties'] = { encoding: 'utf8', content: cleaned };
-      changedFiles.push('gradle.properties');
-    }
-  }
-  if (loader === 'fabric') {
-    for (const candidate of ['fabric.mod.json', 'src/main/resources/fabric.mod.json']) {
-      if (!files[candidate]) continue;
-      const normalized = normalizeFileData(files[candidate]);
-      const cleaned = normalizeFabricModJson(normalized.content, needsFabricApi);
-      if (cleaned !== normalized.content) {
-        files[candidate] = { encoding: 'utf8', content: cleaned };
-        changedFiles.push(candidate);
-      }
     }
   }
   if ((loader === 'paper' || loader === 'spigot') && files['build.gradle']) {
     const normalized = normalizeFileData(files['build.gradle']);
     const cleaned = normalizePluginBuildGradle(normalized.content, loader, version);
-    if (cleaned !== normalized.content) {
-      files['build.gradle'] = { encoding: 'utf8', content: cleaned };
-      changedFiles.push('build.gradle');
-    }
-  }
-  if (loader === 'neoforge' && files['build.gradle']) {
-    const normalized = normalizeFileData(files['build.gradle']);
-    const cleaned = normalizeNeoForgeBuildGradle(normalized.content, version, resolvedBuild);
     if (cleaned !== normalized.content) {
       files['build.gradle'] = { encoding: 'utf8', content: cleaned };
       changedFiles.push('build.gradle');
@@ -904,65 +728,15 @@ async function normalizeGeneratedFiles(files, loader, version, researchedBuild =
   return changedFiles;
 }
 
-async function loadBuildResearch(loader, version) {
-  try {
-    const result = await getBuildResearch(loader, version);
-    return result?.build || null;
-  } catch {
-    return null;
-  }
-}
-
-async function loadBuildResearchBundle(loader, version, preloadedResearch = null) {
-  if (preloadedResearch && typeof preloadedResearch === 'object') {
-    return preloadedResearch;
-  }
-  try {
-    return await getDeepBuildResearch(loader, version, { timeBudgetMs: 115000 });
-  } catch {
-    const build = await loadBuildResearch(loader, version);
-    return build ? { loader, version, build, sources: [], evidence: [], summary: '' } : null;
-  }
-}
-
-function formatResearchPromptContext(researchBundle) {
-  if (!researchBundle || !Array.isArray(researchBundle.evidence) || !researchBundle.evidence.length) {
-    return '';
-  }
-  const official = researchBundle.evidence
-    .filter(entry => entry && entry.status === 'ok' && entry.snippet && entry.tier !== 'community')
-    .slice(0, 6)
-    .map(entry => `- ${entry.title || entry.url}: ${entry.snippet}`);
-  const community = researchBundle.evidence
-    .filter(entry => entry && entry.status === 'ok' && entry.snippet && entry.tier === 'community')
-    .slice(0, 6)
-    .map(entry => `- ${entry.title || entry.url}: ${entry.snippet}`);
-  if (!official.length && !community.length) return '';
-  const sections = [];
-  if (official.length) {
-    sections.push(`Official research bundle for this target:\n${official.join('\n')}`);
-  }
-  if (community.length) {
-    sections.push(`Supplemental community research for this target:\n${community.join('\n')}\nTreat community findings as hints only. When they conflict with official metadata or docs, follow the official sources.`);
-  }
-  return sections.join('\n');
-}
-
-function formatAutonomousResearchContext(bundle) {
-  if (!bundle || !Array.isArray(bundle.sources) || !bundle.sources.length) return '';
-  const lines = bundle.sources
-    .slice(0, 8)
-    .map(source => `- [${source.tier || 'unknown'}] ${source.title || source.url}: ${source.snippet || ''}`);
-  if (!lines.length) return '';
-  return `Autonomous online repair research for this exact failure:\nSearch query: ${bundle.query}\n${lines.join('\n')}\nPrioritize official sources first, then GitHub/issues/forums/posts when confirming the fix.`;
-}
-
 function buildRepairGuidance(loader, version) {
   if (loader === 'fabric') {
-    if (isFabricNonObfuscatedVersion(version)) {
-      return 'For Fabric 26.x targets, assume the environment is non-obfuscated. Do not add mappings dependencies, and do not use old Yarn-era remap assumptions. NEVER use Yarn-style package guesses like net.minecraft.block.*, net.minecraft.registry.*, or net.minecraft.util.Identifier unless you have verified they exist for this exact 26.x target. If the generated code uses those imports, replace them with the current 26.x official names or simplify the scaffold to code you know is valid. For blocks and block items, set registryKey(...) on AbstractBlock.Settings and Item.Settings before constructing the instances.';
+    if (isModernFabricYarnVersion(version)) {
+      return `For this Fabric target, assume the project uses Yarn mappings. Prefer Yarn-style Minecraft imports, use Identifier.of(namespace, path) instead of new Identifier(...), and prefer Item.Settings and AbstractBlock.Settings.copy(...) over outdated FabricItemSettings or FabricBlockSettings helpers.${usesModernFabricRegistryKeys(version) ? ' For modern Fabric block and block-item registration, set registryKey(...) on AbstractBlock.Settings and Item.Settings before constructing the instances.' : ''}`;
     }
-    return `For this Fabric target, assume the project uses Yarn mappings. Prefer Yarn-style Minecraft imports, use Identifier.of(namespace, path) instead of new Identifier(...), and prefer Item.Settings and AbstractBlock.Settings.copy(...) over outdated FabricItemSettings or FabricBlockSettings helpers.${usesModernFabricRegistryKeys(version) ? ' For modern Fabric block and block-item registration, set registryKey(...) on AbstractBlock.Settings and Item.Settings before constructing the instances.' : ''}`;
+    if (isFabricNonObfuscatedVersion(version)) {
+      return 'For Fabric 26.x targets, assume the environment is non-obfuscated. Do not add mappings dependencies, and do not use old Yarn-era remap assumptions. For blocks and block items, set registryKey(...) on AbstractBlock.Settings and Item.Settings before constructing the instances.';
+    }
+    return 'For this Fabric target, respect the generated mappings mode exactly and do not mix Yarn names into an official-mappings build or vice versa.';
   }
   if (loader === 'forge') {
     const isModern = isModernForgeVersion(version);
@@ -985,7 +759,6 @@ function buildRepairGuidance(loader, version) {
       'Event bus registration: accept IEventBus modEventBus as a constructor parameter (injected by NeoForge) and call modEventBus.addListener() to register event handlers. Do not use FMLJavaModLoadingContext.',
       'Use net.neoforged.bus.api.SubscribeEvent and net.neoforged.bus.api.IEventBus for event bus types.',
       'Use net.neoforged.fml.common.Mod for the @Mod annotation.',
-      'Research the current net.neoforged.gradle.userdev plugin version and the matching net.neoforged:neoforge artifact version from official NeoForged Maven before changing build files.',
       'Do not mix in Fabric or Forge-only imports unless they are truly shared.',
     ].join('\n');
   }
@@ -1087,151 +860,117 @@ function stripUnsupportedFabricLoomSettings(content, version) {
   return next.trimEnd();
 }
 
-function normalizeFabricBuildGradle(content, version, researchedBuild = null, needsFabricApi = false) {
+/**
+ * Fix misplaced `accessWidener` assignments in a Fabric build.gradle.
+ *
+ * Fabric Loom exposes `accessWidener` as a read-only property on the
+ * DependencyHandler, so writing `accessWidener = "..."` inside a
+ * `dependencies {}` block throws:
+ *   "Cannot set the property 'accessWidener' because the backing field is final."
+ *
+ * The correct placement is inside the `loom {}` extension block:
+ *   loom {
+ *     accessWidenerPath = file("src/main/resources/modid.accesswidener")
+ *   }
+ *
+ * This function:
+ *   1. Strips any `accessWidener`/`accessWidenerPath` assignments that appear
+ *      inside a `dependencies {}` block (or at top-level where they are also
+ *      invalid).
+ *   2. If a valid accesswidener value was found and no `loom { accessWidener... }`
+ *      block already exists, injects the correct declaration into an existing
+ *      `loom {}` block, or prepends a new one right before `dependencies {`.
+ */
+function fixAccessWidenerPlacement(content) {
   let next = String(content || '');
-  const mappingMode = getNormalizedFabricMappingMode(version, researchedBuild);
-  next = next.replace(/id\s+'net\.fabricmc\.fabric-loom-remap'/g, "id 'net.fabricmc.fabric-loom'");
-  next = next.replace(/id\s+'fabric-loom'/g, "id 'net.fabricmc.fabric-loom'");
-  next = next.replace(/\bid\s+"net\.fabricmc\.fabric-loom-remap"/g, 'id "net.fabricmc.fabric-loom"');
-  next = next.replace(/\bid\s+"fabric-loom"/g, 'id "net.fabricmc.fabric-loom"');
-  next = next.replace(/\bfabricLoader\s*\(\s*(["'][^"']+["'])\s*\)/g, 'implementation $1');
-  next = next.replace(/\bfabricApi\s*\(\s*(["'][^"']+["'])\s*\)/g, 'implementation $1');
-  next = next.replace(/\byarnMappings\s*\(\s*(["'][^"']+["'])\s*\)/g, 'mappings $1');
-  next = next.replace(/\bofficialMappings\s*\(\s*\)/g, 'mappings loom.officialMojangMappings()');
 
-  next = next.replace(/^\s*mappings\s+"net\.fabricmc:yarn:[^"\r\n]*"\s*(?:\r?\n|$)/gm, '');
-  next = next.replace(/^\s*mappings\s+loom\.officialMojangMappings\(\)\s*(?:\r?\n|$)/gm, '');
-  next = next.replace(/^\s*(?:implementation|modImplementation|compileOnly|modCompileOnly|runtimeOnly|modRuntimeOnly)\s+["']net\.fabricmc(?:\.fabric-api)?:[^"'\r\n]+["']\s*(?:\r?\n|$)/gm, '');
+  // --- 1. Collect the widener value from any misplaced assignment ---
+  // Matches both forms the AI tends to emit:
+  //   accessWidener = "src/main/resources/redlight.accesswidener"
+  //   accessWidenerPath = file("src/main/resources/redlight.accesswidener")
+  //   loom.accessWidener = "..."
+  let capturedWidenerValue = null; // the raw file path string, e.g. "src/main/resources/foo.accesswidener"
 
-  if (mappingMode === 'yarn') {
+  // Helper: extract path string from either plain string or file("...") call
+  function extractPath(raw) {
+    const fileCall = raw.match(/file\s*\(\s*["']([^"']+)["']\s*\)/);
+    if (fileCall) return fileCall[1];
+    const plain = raw.match(/^["']([^"']+)["']$/);
+    if (plain) return plain[1];
+    return null;
+  }
+
+  // Collect from standalone (top-level or inside dependencies) misplaced lines.
+  // We remove these as we go so they don't cause compile errors.
+  next = next.replace(
+    /^(\s*)(?:loom\.)?accessWidenerPath\s*=\s*(.+?)(\s*(?:\/\/[^\r\n]*)?)$/gm,
+    (match, indent, rhs) => {
+      // Only capture if NOT already inside a loom { } block (heuristic: no loom block on the same line)
+      const path = extractPath(rhs.trim());
+      if (path && !capturedWidenerValue) capturedWidenerValue = path;
+      return ''; // remove the misplaced line
+    }
+  );
+  next = next.replace(
+    /^(\s*)(?:loom\.)?accessWidener\s*=\s*(.+?)(\s*(?:\/\/[^\r\n]*)?)$/gm,
+    (match, indent, rhs) => {
+      const path = extractPath(rhs.trim());
+      if (path && !capturedWidenerValue) capturedWidenerValue = path;
+      return '';
+    }
+  );
+
+  // Clean up any blank lines created by the removals
+  next = next.replace(/\n{3,}/g, '\n\n');
+
+  if (!capturedWidenerValue) return next; // nothing was wrong
+
+  // --- 2. Check if loom {} already contains a correct accessWidener setting ---
+  const alreadyInLoom = /loom\s*\{[^}]*accessWidener/s.test(next);
+  if (alreadyInLoom) return next; // already correct, nothing more to do
+
+  // --- 3. Build the correct loom block snippet ---
+  const injection = `\nloom {\n    accessWidenerPath = file("${capturedWidenerValue}")\n}\n`;
+
+  // --- 4a. If there's already a loom { } block, inject inside it ---
+  if (/\bloom\s*\{/.test(next)) {
+    next = next.replace(/(\bloom\s*\{)/, `$1\n    accessWidenerPath = file("${capturedWidenerValue}")`);
+    return next;
+  }
+
+  // --- 4b. Otherwise inject a new loom { } block before dependencies { ---
+  if (/\bdependencies\s*\{/.test(next)) {
+    next = next.replace(/(\bdependencies\s*\{)/, `${injection}\n$1`);
+    return next;
+  }
+
+  // --- 4c. Fallback: append at end ---
+  next = next + '\n' + injection;
+  return next;
+}
+
+function normalizeFabricBuildGradle(content, version) {
+  let next = String(content || '');
+  if (version === '1.21.11') {
+    next = next.replace(/id\s+'net\.fabricmc\.fabric-loom'(?!-remap)/g, "id 'net.fabricmc.fabric-loom-remap'");
+    next = next.replace(/^\s*mappings\s+loom\.officialMojangMappings\(\)\s*(?:\r?\n|$)/gm, '');
     if (!/^\s*mappings\s+"net\.fabricmc:yarn:\$\{project\.yarn_mappings\}:v2"\s*$/m.test(next)) {
       next = next.replace(
         /(dependencies\s*\{\s*\r?\n\s*minecraft\s+"com\.mojang:minecraft:\\\$\{project\.minecraft_version\}"\s*\r?\n)/,
         `$1    mappings "net.fabricmc:yarn:\${project.yarn_mappings}:v2"\n`,
       );
     }
-  } else if (mappingMode === 'official') {
-    if (!/^\s*mappings\s+loom\.officialMojangMappings\(\)\s*$/m.test(next)) {
-      next = next.replace(
-        /(dependencies\s*\{\s*\r?\n\s*minecraft\s+"com\.mojang:minecraft:\\\$\{project\.minecraft_version\}"\s*\r?\n)/,
-        `$1    mappings loom.officialMojangMappings()\n`,
-      );
-    }
+    next = next.replace(/\bimplementation\s+"net\.fabricmc:fabric-loader:/g, 'modImplementation "net.fabricmc:fabric-loader:');
+    next = next.replace(/\bimplementation\s+"net\.fabricmc\.fabric-api:fabric-api:/g, 'modImplementation "net.fabricmc.fabric-api:fabric-api:');
   }
-
-  next = next.replace(/\bmodImplementation\b/g, 'implementation');
-  next = next.replace(/\bmodCompileOnly\b/g, 'compileOnly');
-  next = next.replace(/\bmodRuntimeOnly\b/g, 'runtimeOnly');
-  const validFabricApiVersion = getResolvedFabricApiVersion(version, researchedBuild);
-  if (needsFabricApi && validFabricApiVersion && !/net\.fabricmc\.fabric-api:fabric-api:\$\{project\.fabric_version\}/.test(next)) {
-    next = next.replace(
-      /(implementation\s+"net\.fabricmc:fabric-loader:\\\$\{project\.loader_version\}"\s*\r?\n)/,
-      `$1    implementation "net.fabricmc.fabric-api:fabric-api:\${project.fabric_version}"\n`,
-    );
+  if (isFabricNonObfuscatedVersion(version)) {
+    next = next.replace(/id\s+'net\.fabricmc\.fabric-loom-remap'/g, "id 'net.fabricmc.fabric-loom'");
+    next = next.replace(/id\s+'fabric-loom'/g, "id 'net.fabricmc.fabric-loom'");
+    next = next.replace(/\bmodImplementation\b/g, 'implementation');
+    next = next.replace(/\bmodCompileOnly\b/g, 'compileOnly');
+    next = next.replace(/\bmodRuntimeOnly\b/g, 'runtimeOnly');
   }
   return next;
-}
-
-function normalizeFabricSettingsGradle(content) {
-  const raw = String(content || '').trim();
-  const projectNameMatch = raw.match(/rootProject\.name\s*=\s*['"]([^'"]+)['"]/);
-  const projectName = projectNameMatch ? projectNameMatch[1] : 'minecraftmod';
-  return `pluginManagement {
-    repositories {
-        maven {
-            name = 'Fabric'
-            url = 'https://maven.fabricmc.net/'
-        }
-        gradlePluginPortal()
-        mavenCentral()
-    }
-}
-
-rootProject.name = '${projectName}'`;
-}
-
-function getNormalizedFabricMappingMode(version, researchedBuild = null) {
-  if (isFabricNonObfuscatedVersion(version)) return 'none';
-  const yarnVersion = researchedBuild?.yarnVersion || getFabricYarnFallback(version);
-  if (isValidYarnVersion(yarnVersion)) return 'yarn';
-  return 'yarn';
-}
-
-function isValidYarnVersion(version) {
-  return /^\d+\.\d+(?:\.\d+)?\+build\.\d+$/.test(String(version || ''));
-}
-
-function getFabricYarnFallback(version) {
-  const key = String(version || '');
-  if (key === '1.21.11') return '1.21.11+build.4';
-  if (key === '1.21.10') return '1.21.10+build.3';
-  if (key === '1.21.4') return '1.21.4+build.8';
-  if (key === '1.21.2') return '1.21.2+build.1';
-  if (key === '1.21.1') return '1.21.1+build.3';
-  if (key === '1.21') return '1.21+build.9';
-  return null;
-}
-
-function normalizeFabricGradleProperties(content, version, researchedBuild = null, needsFabricApi = false) {
-  let next = String(content || '');
-  next = next.replace(/^\s*yarn_mappings=.*(?:\r?\n|$)/gm, '');
-  if (!isFabricNonObfuscatedVersion(version)) {
-    const validYarn = isValidYarnVersion(researchedBuild?.yarnVersion)
-      ? researchedBuild.yarnVersion
-      : getFabricYarnFallback(version);
-    if (validYarn) {
-      const suffix = next.endsWith('\n') ? '' : '\n';
-      next = `${next}${suffix}yarn_mappings=${validYarn}\n`;
-    }
-  }
-  next = next.replace(/^\s*fabric_version=.*(?:\r?\n|$)/gm, '');
-  const validFabricApiVersion = getResolvedFabricApiVersion(version, researchedBuild);
-  if (needsFabricApi && validFabricApiVersion) {
-    const suffix = next.endsWith('\n') ? '' : '\n';
-    next = `${next}${suffix}fabric_version=${validFabricApiVersion}\n`;
-  }
-  return next.trimEnd();
-}
-
-function getResolvedFabricApiVersion(version, researchedBuild = null) {
-  const candidate = String(researchedBuild?.fabricApiVersion || '').trim();
-  if (!candidate) return null;
-  return isFabricApiVersionForMinecraft(candidate, version) ? candidate : null;
-}
-
-function isFabricApiVersionForMinecraft(candidate, minecraftVersion) {
-  const version = String(candidate || '').trim();
-  const game = String(minecraftVersion || '').trim();
-  if (!version || !game) return false;
-  return version.endsWith(`+${game}`);
-}
-
-function normalizeFabricModJson(content, needsFabricApi = false) {
-  try {
-    const parsed = JSON.parse(String(content || '{}'));
-    const depends = parsed && typeof parsed.depends === 'object' && !Array.isArray(parsed.depends)
-      ? { ...parsed.depends }
-      : {};
-    if (needsFabricApi) {
-      depends['fabric-api'] = depends['fabric-api'] || '*';
-    } else {
-      delete depends['fabric-api'];
-      delete depends['fabric-api-base'];
-    }
-    if (Object.keys(depends).length) parsed.depends = depends;
-    else delete parsed.depends;
-    return JSON.stringify(parsed, null, 2);
-  } catch {
-    return content;
-  }
-}
-
-function projectUsesFabricApi(files) {
-  return Object.values(files || {}).some(file => {
-    const normalized = normalizeFileData(file);
-    if (normalized.encoding !== 'utf8') return false;
-    return /\bnet\.fabricmc\.fabric\.api\b/.test(normalized.content || '');
-  });
 }
 
 function normalizeFabricJavaSource(content, version) {
@@ -1261,30 +1000,6 @@ function normalizePluginBuildGradle(content, loader, version) {
     next = next.replace(/1\.21\.1-R0\.1-SNAPSHOT/g, `${version}-R0.1-SNAPSHOT`);
   }
 
-  return next;
-}
-
-function normalizeNeoForgeBuildGradle(content, version, researchedBuild = null) {
-  let next = String(content || '');
-  if (!/maven\.neoforged\.net\/releases/i.test(next)) {
-    if (/repositories\s*\{/i.test(next)) {
-      next = next.replace(/repositories\s*\{\s*/i, match => `${match}\n    maven { url = 'https://maven.neoforged.net/releases' }\n`);
-    } else {
-      next += `\n\nrepositories {\n    mavenCentral()\n    maven { url = 'https://maven.neoforged.net/releases' }\n}\n`;
-    }
-  }
-  if (researchedBuild?.userdevVersion) {
-    next = next.replace(
-      /(id\s+'net\.neoforged\.gradle\.userdev'\s+version\s+')([^']+)(')/g,
-      `$1${researchedBuild.userdevVersion}$3`,
-    );
-  }
-  if (researchedBuild?.neoforgeVersion) {
-    next = next.replace(
-      /implementation\s+"net\.neoforged:neoforge:[^"]+"/g,
-      `implementation "net.neoforged:neoforge:${researchedBuild.neoforgeVersion}"`,
-    );
-  }
   return next;
 }
 
@@ -1445,44 +1160,6 @@ function tail(value, maxChars) {
   const text = String(value || '');
   if (text.length <= maxChars) return text;
   return text.slice(text.length - maxChars);
-}
-
-function extractBuildFailureSignature(log) {
-  const text = String(log || '');
-  const lines = text
-    .split(/\r?\n/)
-    .map(line => line.trim())
-    .filter(Boolean);
-  const picked = [];
-
-  for (const line of lines) {
-    if (/^\*\s+What went wrong:/i.test(line) || /^\>\s/.test(line) || /error:/i.test(line) || /cannot find symbol/i.test(line) || /package .* does not exist/i.test(line)) {
-      picked.push(line.replace(/\s+/g, ' '));
-    }
-    if (picked.length >= 8) break;
-  }
-
-  return picked.join(' | ').slice(0, 1200);
-}
-
-function buildRepairFingerprint(files, summary, changedFiles) {
-  const selected = (Array.isArray(changedFiles) ? changedFiles : [])
-    .slice()
-    .sort()
-    .map(filePath => `${filePath}:${tail(normalizeFileData(files[filePath]).content, 240)}`);
-  return `${summary || ''}\n${selected.join('\n')}`;
-}
-
-function extractLatestPrompt(conversation) {
-  const entries = Array.isArray(conversation) ? [...conversation].reverse() : [];
-  for (const entry of entries) {
-    if (entry?.role !== 'user') continue;
-    const content = String(entry.content || '').trim();
-    if (!content) continue;
-    const marker = '[User request]';
-    return content.includes(marker) ? content.split(marker).pop().trim() : content;
-  }
-  return '';
 }
 
 function getRequiredJavaVersion(loader, version) {
@@ -1680,7 +1357,7 @@ async function downloadAndExtractTarGz(url, extractRoot) {
       timeout,
     ]);
   } catch (error) {
-    throw new Error(`The downloaded JDK could not be extracted.\n${tailText(error?.message || String(error), 1200)}`);
+    throw new Error(`The downloaded JDK could not be extracted.\n${tail(error?.message || String(error), 1200)}`);
   }
 }
 

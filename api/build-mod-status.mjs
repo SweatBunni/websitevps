@@ -1,24 +1,36 @@
 import { getLatestStatus } from './_lib/build-store.mjs';
-import { getSearchParam, jsonResponse, methodNotAllowed } from './_lib/http-utils.mjs';
 
-const STATUS_TIMEOUT_MS = 4000;
+function json(body, init = {}) {
+  return Response.json(body, {
+    status: init.status || 200,
+    headers: {
+      'Cache-Control': 'no-store',
+      ...(init.headers || {}),
+    },
+  });
+}
 
 export default async function handler(request) {
-  if (request.method !== 'GET') {
-    return methodNotAllowed();
-  }
-
-  const jobId = getSearchParam(request, 'jobId');
-  if (!jobId) {
-    return jsonResponse({ message: 'jobId is required.' }, { status: 400 });
-  }
-
   try {
-    const status = await getLatestStatusWithTimeout(jobId, STATUS_TIMEOUT_MS);
-    return jsonResponse(status || createQueuedFallback(jobId));
+    if (request.method !== 'GET') {
+      return json({ message: 'Method not allowed.' }, { status: 405 });
+    }
+
+    const { searchParams } = new URL(request.url);
+    const jobId = searchParams.get('jobId') || '';
+    if (!jobId) {
+      return json({ message: 'jobId is required.' }, { status: 400 });
+    }
+
+    const status = await getLatestStatusWithTimeout(jobId, 4000);
+    if (!status) {
+      return json(fallbackQueuedStatus(jobId));
+    }
+
+    return json(status);
   } catch (error) {
-    return jsonResponse({
-      ...createQueuedFallback(jobId),
+    return json({
+      ...fallbackQueuedStatus(new URL(request.url).searchParams.get('jobId') || ''),
       message: error?.message || 'Unexpected build status error.',
     });
   }
@@ -29,14 +41,12 @@ async function getLatestStatusWithTimeout(jobId, timeoutMs) {
   return Promise.race([getLatestStatus(jobId), timeout]);
 }
 
-function createQueuedFallback(jobId) {
-  const now = new Date().toISOString();
+function fallbackQueuedStatus(jobId) {
   return {
     jobId,
     status: 'queued',
     attempts: [],
-    activityLog: [{ time: now, message: 'Waiting for build status...' }],
-    updatedAt: now,
+    updatedAt: new Date().toISOString(),
     provider: 'vercel',
     message: 'Waiting for build status...',
   };
