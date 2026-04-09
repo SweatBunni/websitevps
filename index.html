@@ -482,6 +482,19 @@ html, body {
   border-bottom: 1px solid var(--border);
 }
 #typing.visible { display: flex; align-items: center; gap: 8px; }
+.typing-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  width: 100%;
+}
+.typing-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
 .typing-label { font-size: 10px; color: var(--text3); letter-spacing: 1px; text-transform: uppercase; }
 .typing-dots { display: flex; gap: 4px; }
 .typing-dot {
@@ -493,6 +506,41 @@ html, body {
 .typing-dot:nth-child(2) { animation-delay: 0.2s; }
 .typing-dot:nth-child(3) { animation-delay: 0.4s; }
 @keyframes pulse { 0%,100% { opacity: 0.3; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1.1); } }
+.chat-activity-console {
+  background: rgba(0,0,0,0.16);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  width: min(100%, 560px);
+}
+.chat-activity-head {
+  padding: 7px 10px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text3);
+  border-bottom: 1px solid var(--border);
+  background: rgba(255,255,255,0.02);
+}
+.chat-activity-log {
+  max-height: 120px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text2);
+  scrollbar-width: thin;
+}
+.chat-activity-line {
+  line-height: 1.45;
+  word-break: break-word;
+}
+.chat-activity-line strong {
+  color: var(--amber2);
+  margin-right: 6px;
+}
 
 /* build prompt */
 .build-prompt {
@@ -547,6 +595,7 @@ html, body {
 }
 .build-progress-title { font-size: 11px; color: var(--text2); margin-bottom: 10px; }
 .build-progress-title strong { color: var(--text); }
+.build-source-note { font-size: 10px; color: var(--amber); margin: -2px 0 10px; }
 .build-log { display: flex; flex-direction: column; gap: 5px; }
 .build-log-line {
   display: flex;
@@ -563,6 +612,40 @@ html, body {
 .build-log-line.done span:last-child { color: var(--text2); }
 .build-log-line.running span:last-child { color: var(--amber2); }
 .build-log-line.error span:last-child { color: var(--red); }
+.build-activity-console {
+  margin-top: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.build-activity-head {
+  padding: 7px 10px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  font-size: 10px;
+  color: var(--amber);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+.build-activity-log {
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11px;
+}
+.build-activity-line {
+  color: var(--text2);
+  line-height: 1.45;
+}
+.build-activity-line strong {
+  color: var(--amber2);
+  font-weight: 600;
+}
 
 .build-download-btn {
   display: inline-flex;
@@ -806,12 +889,18 @@ details pre {
       <div id="messages">
         <div id="typing" class="hidden">
           <div class="msg-gutter"><div class="msg-avatar ai">⛏</div></div>
-          <div style="padding:14px 0;display:flex;align-items:center;gap:8px;">
+          <div class="typing-body">
+            <div class="typing-head">
             <span class="typing-label">Generating</span>
             <div class="typing-dots">
               <div class="typing-dot"></div>
               <div class="typing-dot"></div>
               <div class="typing-dot"></div>
+            </div>
+            </div>
+            <div class="chat-activity-console">
+              <div class="chat-activity-head">Live Chat Activity</div>
+              <div id="chat-activity-log" class="chat-activity-log"></div>
             </div>
           </div>
         </div>
@@ -832,7 +921,16 @@ details pre {
   </div>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js">
+function getSelectedSetup() {
+  return {
+    loader: document.getElementById("loader-sel")?.value,
+    mcVersion: document.getElementById("version-sel")?.value
+  };
+}
+
+</script>
+<script src="/app-build.js"></script>
 <script>
 const DEFAULT_SYSTEM = `You are CodexMC, an expert Minecraft Java Edition coding assistant.
 You specialize in:
@@ -850,16 +948,20 @@ Include import statements. Explain your code clearly.
 Always respect the selected loader and Minecraft version.
 Only use imports, mappings, classes, and methods that actually exist for that target.
 Follow the selected target's mappings mode and loader conventions exactly.
-For Fabric targets where CodexMC scaffolds Yarn mappings, use Yarn-style Minecraft imports there.
+For Fabric targets, use Yarn mappings and Yarn-style Minecraft imports by default unless the selected target is a non-obfuscated Fabric 26.x environment.
 For modern Fabric/Yarn targets such as 1.21.x, do not use new Identifier(...); use Identifier.of(namespace, path) or Identifier.of(fullId) instead.
 For modern Yarn-based Fabric targets, prefer \`Item.Settings\` and \`AbstractBlock.Settings.copy(...)\` over outdated helper classes like \`FabricItemSettings\` or \`FabricBlockSettings\`.
 For modern Fabric blocks and block items, set \`registryKey(...)\` on \`AbstractBlock.Settings\` and \`Item.Settings\` before constructing the instances.
 For Fabric 26.1 or newer, treat the environment as non-obfuscated and avoid old Yarn-era tutorial imports unless you are certain they still exist.
+For Fabric 26.x specifically, NEVER assume Yarn packages like \`net.minecraft.block.*\`, \`net.minecraft.registry.*\`, or \`net.minecraft.util.Identifier\` exist. If uncertain, generate a smaller valid scaffold instead of guessing imports.
 If a requested advanced API surface such as biome, worldgen, or feature code is uncertain for the selected target, prefer a smaller safe scaffold instead of inventing imports.
 When relevant, mention the Minecraft version your code targets.
 For full mod generation, prefer multiple Java source files instead of one giant class.
 Return one fenced java code block per Java file.
 Start each Java code block with a comment like // File: src/main/java/com/example/mod/ExampleClass.java.
+For full buildable project generation, do NOT rely on hidden templates. You must output the actual project files yourself.
+When generating a full mod or plugin, include complete file blocks for build.gradle, settings.gradle, gradle.properties, loader metadata files, and all required Java/resource files.
+Start every generated file block with a first line comment like // File: relative/path.ext, even for Gradle, JSON, TOML, and other non-Java files.
 
 IMPORTANT - TEXTURES: You ALWAYS include complete model JSON files for any item or block you create. Never say you cannot create textures. The build system auto-generates PNG textures using AI image generation. Your job is to output the correct model JSON and reference texture paths properly in code. Always register items and blocks with their full resource location so textures are detected and generated automatically.`
 
@@ -911,6 +1013,16 @@ function normalizeStoredChats(value) {
       messages: messages.length ? messages : [{ role: 'system', content: DEFAULT_SYSTEM }],
       loader: typeof chat.loader === 'string' && chat.loader ? chat.loader : null,
       version: typeof chat.version === 'string' && chat.version ? chat.version : null,
+      activityLog: Array.isArray(chat.activityLog)
+        ? chat.activityLog
+            .filter(entry => entry && typeof entry === 'object')
+            .map(entry => ({
+              time: typeof entry.time === 'string' && entry.time ? entry.time : new Date().toISOString(),
+              message: typeof entry.message === 'string' ? entry.message : '',
+            }))
+            .filter(entry => entry.message)
+            .slice(-12)
+        : [],
     };
   }).filter(Boolean);
 }
@@ -933,29 +1045,9 @@ let backendProvider = null;
 
 // ── INIT ──
 // ── LOADER / VERSION ──
-const FABRIC_VERSIONS = [
-  '1.21.11','1.21.10','1.21.4','1.21.3','1.21.2','1.21.1','1.21',
-  '1.20.6','1.20.4','1.20.2','1.20.1',
-  '1.19.4','1.19.3','1.19.2','1.19.1','1.19',
-  '1.18.2','1.18.1','1.18',
-  '1.17.1',
-  '1.16.5','1.16.4','1.16.3','1.16.2','1.16.1',
-];
-const FORGE_VERSIONS  = [
-  '1.21.11','1.21.10','1.21.4','1.21.3','1.21.2','1.21.1','1.21',
-  '1.20.6','1.20.4','1.20.2','1.20.1',
-  '1.19.4','1.19.3','1.19.2','1.19.1','1.19',
-  '1.18.2','1.18.1','1.18',
-  '1.17.1',
-  '1.16.5','1.16.4','1.16.3','1.16.2','1.16.1',
-  '1.15.2','1.15.1','1.15',
-  '1.14.4',
-  '1.12.2',
-];
-const NEO_VERSIONS    = [
-  '1.21.11','1.21.10','1.21.4','1.21.3','1.21.2','1.21.1','1.21',
-  '1.20.6','1.20.4','1.20.2','1.20.1',
-];
+const FABRIC_VERSIONS = [];
+const FORGE_VERSIONS  = [];
+const NEO_VERSIONS    = [];
 const SPIGOT_VERSIONS = [
   '1.21.11','1.21.10','1.21.4','1.21.3','1.21.2','1.21.1','1.21',
   '1.20.6','1.20.4','1.20.2','1.20.1',
@@ -970,6 +1062,65 @@ const SPIGOT_VERSIONS = [
   '1.8.8',
 ];
 const PAPER_VERSIONS  = SPIGOT_VERSIONS;
+const BUILD_RESEARCH_PROMISES = new Map();
+const RESEARCHED_FABRIC_BUILD_DATA = {};
+const RESEARCHED_FORGE_BUILD_DATA = {};
+const RESEARCHED_NEOFORGE_BUILD_DATA = {};
+
+function replaceArrayContents(target, values) {
+  target.splice(0, target.length, ...(Array.isArray(values) ? values : []));
+}
+
+async function loadDynamicLoaderVersions() {
+  try {
+    const { response } = await fetchBackend('research', {}, '?kind=versions');
+    if (!response.ok) return;
+    const payload = await response.json().catch(() => ({}));
+    if (Array.isArray(payload?.versions?.fabric) && payload.versions.fabric.length) {
+      replaceArrayContents(FABRIC_VERSIONS, payload.versions.fabric);
+    }
+    if (Array.isArray(payload?.versions?.forge) && payload.versions.forge.length) {
+      replaceArrayContents(FORGE_VERSIONS, payload.versions.forge);
+    }
+    if (Array.isArray(payload?.versions?.neoforge) && payload.versions.neoforge.length) {
+      replaceArrayContents(NEO_VERSIONS, payload.versions.neoforge);
+    }
+  } catch {}
+}
+
+async function ensureBuildResearch(loader, version) {
+  if (loader !== 'fabric' && loader !== 'forge' && loader !== 'neoforge') return null;
+  const bucket = loader === 'fabric'
+    ? RESEARCHED_FABRIC_BUILD_DATA
+    : loader === 'forge'
+      ? RESEARCHED_FORGE_BUILD_DATA
+      : RESEARCHED_NEOFORGE_BUILD_DATA;
+  if (bucket[version]) return bucket[version];
+
+  const key = `${loader}:${version}`;
+  if (BUILD_RESEARCH_PROMISES.has(key)) {
+    return BUILD_RESEARCH_PROMISES.get(key);
+  }
+
+  const pending = (async () => {
+    try {
+      const query = `?kind=build&loader=${encodeURIComponent(loader)}&version=${encodeURIComponent(version)}`;
+      const { response } = await fetchBackend('research', {}, query);
+      if (!response.ok) return null;
+      const payload = await response.json().catch(() => ({}));
+      if (payload?.build && typeof payload.build === 'object') {
+        bucket[version] = payload.build;
+        return payload.build;
+      }
+    } catch {}
+    return null;
+  })();
+
+  BUILD_RESEARCH_PROMISES.set(key, pending);
+  const result = await pending;
+  BUILD_RESEARCH_PROMISES.delete(key);
+  return result;
+}
 
 function onLoaderChange() {
   const loader = document.getElementById('loader-sel').value;
@@ -978,10 +1129,12 @@ function onLoaderChange() {
   const sel = document.getElementById('version-sel');
   const cur = sel.value;
   sel.innerHTML = versions.map(v => `<option value="${v}"${v===cur?' selected':''}>${v}</option>`).join('');
+  if (sel.selectedIndex === -1 && versions.length) sel.value = versions[0];
 }
 
-window.addEventListener('DOMContentLoaded', () => {
+window.addEventListener('DOMContentLoaded', async () => {
   syncResponsiveLayout(true);
+  await loadDynamicLoaderVersions();
   onLoaderChange();
   renderChatList();
 
@@ -1166,7 +1319,15 @@ function renderChatList() {
 
 function createDraftChat() {
   const id = 'chat_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);
-  const chat = { id, title: 'New Chat', created: Date.now(), messages: [{ role: 'system', content: state.systemPrompt || DEFAULT_SYSTEM }], loader: null, version: null };
+  const chat = {
+    id,
+    title: 'New Chat',
+    created: Date.now(),
+    messages: [{ role: 'system', content: state.systemPrompt || DEFAULT_SYSTEM }],
+    loader: null,
+    version: null,
+    activityLog: [],
+  };
   state.chats.push(chat);
   state.currentId = id;
   return chat;
@@ -1175,6 +1336,7 @@ function createDraftChat() {
 function newChat() {
   resetMessages();
   createDraftChat();
+  renderChatActivity([]);
   showWelcome(true);
   document.getElementById('topbar-title').textContent = 'New Chat';
   updateUrlHash(null);
@@ -1190,6 +1352,7 @@ function loadChat(id) {
   showWelcome(false);
   resetMessages();
   chat.messages.filter(m => m.role !== 'system').forEach(m => appendMessage(m.role, m.content, false));
+  renderChatActivity(chat.activityLog || []);
   document.getElementById('topbar-title').textContent = chat.title;
 
   // Restore loader/version selectors to what this chat used
@@ -1257,7 +1420,8 @@ function showWelcome(show = true) { document.getElementById('welcome').style.dis
 function resetMessages() {
   const m = document.getElementById('messages');
   m.querySelectorAll('.msg').forEach(el => el.remove());
-  document.getElementById('typing').classList.add('hidden');
+  setTypingVisible(false);
+  renderChatActivity([]);
 }
 function scrollToBottom() {
   const w = document.getElementById('messages-wrap');
@@ -1271,6 +1435,62 @@ function sendStarter(el) {
 }
 function escapeHtml(t) {
   return String(t||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function setTypingVisible(visible) {
+  const typing = document.getElementById('typing');
+  if (!typing) return;
+  typing.classList.toggle('hidden', !visible);
+  typing.classList.toggle('visible', !!visible);
+}
+
+function renderChatActivity(entries = []) {
+  const logEl = document.getElementById('chat-activity-log');
+  if (!logEl) return;
+  logEl.innerHTML = '';
+  const list = Array.isArray(entries) ? entries.slice(-12) : [];
+  if (!list.length) {
+    logEl.innerHTML = '<div class="chat-activity-line">Waiting for activity...</div>';
+    return;
+  }
+  list.forEach(entry => {
+    const line = document.createElement('div');
+    line.className = 'chat-activity-line';
+    const time = entry?.time ? new Date(entry.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '--:--:--';
+    line.innerHTML = `<strong>${escapeHtml(time)}</strong> ${escapeHtml(entry?.message || '')}`;
+    logEl.appendChild(line);
+  });
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function getCurrentChatActivity() {
+  const chat = getCurrentChat();
+  return Array.isArray(chat?.activityLog) ? chat.activityLog : [];
+}
+
+function clearChatActivity() {
+  const chat = getCurrentChat();
+  if (chat) {
+    chat.activityLog = [];
+    saveChats();
+  }
+  renderChatActivity([]);
+}
+
+function addChatActivity(message) {
+  if (!message) return;
+  const chat = getCurrentChat();
+  const next = getCurrentChatActivity().slice(-11);
+  next.push({
+    time: new Date().toISOString(),
+    message: String(message),
+  });
+  if (chat) {
+    chat.activityLog = next;
+    saveChats();
+  }
+  renderChatActivity(next);
+  scrollToBottom();
 }
 
 // ── RENDER ──
@@ -1367,8 +1587,13 @@ async function sendMessage() {
   }
   updateUrlHash(chat.id);
 
-  const typing = document.getElementById('typing');
-  typing.classList.remove('hidden');
+  clearChatActivity();
+  setTypingVisible(true);
+  addChatActivity(`Captured your ${loader} ${version} request.`);
+  addChatActivity('Researching official version metadata for this target.');
+  await ensureBuildResearch(loader, version);
+  addChatActivity('Prepared researched build metadata and target context.');
+  addChatActivity('Sending the request to the AI model.');
   scrollToBottom();
 
   try {
@@ -1385,18 +1610,19 @@ async function sendMessage() {
     });
 
     if (!response.ok) {
-      typing.classList.add('hidden');
+      setTypingVisible(false);
       const err = await response.json().catch(() => ({}));
       appendMessage('ai', `**Error:** ${err.message || `HTTP ${response.status}`}`);
       throw new Error('non-ok response');
     }
 
-    typing.classList.add('hidden');
+    addChatActivity('Connected to the AI stream. Waiting for the first tokens.');
 
     // Read SSE stream
     const reader = response.body.getReader();
     const dec = new TextDecoder();
     let buf = '', fullText = '', contentEl = null;
+    let announcedStreaming = false;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -1411,6 +1637,10 @@ async function sendMessage() {
           const evt = JSON.parse(t.slice(5).trim());
           if (evt.error) throw new Error(evt.error);
           if (evt.delta) {
+            if (!announcedStreaming) {
+              announcedStreaming = true;
+              addChatActivity('Streaming researched response back into the chat.');
+            }
             fullText += evt.delta;
             if (!contentEl) {
               contentEl = appendMessage('ai', fullText);
@@ -1429,6 +1659,8 @@ async function sendMessage() {
     }
 
     if (!contentEl) contentEl = appendMessage('ai', fullText || '(no response)');
+    addChatActivity('Response complete. Saving the conversation.');
+    setTypingVisible(false);
 
     chat.messages.push({ role: 'assistant', content: fullText });
     saveChats();
@@ -1438,7 +1670,8 @@ async function sendMessage() {
     }
 
   } catch (err) {
-    typing.classList.add('hidden');
+    addChatActivity(`Chat request failed: ${err.message || 'unknown error'}`);
+    setTypingVisible(false);
     if (err.message !== 'non-ok response') appendMessage('ai', `**Error:** ${err.message}`);
   }
 
@@ -1493,74 +1726,28 @@ function extractCodeBlocks(text) {
   return blocks;
 }
 
-const VERIFIED_FABRIC_BUILD_DATA = {
-  default: {
-    loomVersion: '1.14.10',
-    loaderVersion: '0.18.2',
-    fabricApiVersion: null,
-    mappingMode: 'official',
-    yarnVersion: null,
-  },
-  '1.21': {
-    fabricApiVersion: '0.102.0+1.21',
-    mappingMode: 'yarn',
-    yarnVersion: '1.21+build.9',
-  },
-  '1.21.1': {
-    fabricApiVersion: '0.116.9+1.21.1',
-    mappingMode: 'yarn',
-    yarnVersion: '1.21.1+build.1',
-  },
-  '1.21.11': {
-    fabricApiVersion: '0.141.3+1.21.11',
-    mappingMode: 'yarn',
-    yarnVersion: '1.21.11+build.3',
-  },
-  '1.21.4': {
-    fabricApiVersion: '0.119.4+1.21.4',
-    mappingMode: 'yarn',
-    yarnVersion: '1.21.4+build.4',
-  },
-  '26.1': {
-    mappingMode: 'none',
-  },
-  '26.1.1': {
-    mappingMode: 'none',
-  },
+const DEFAULT_FABRIC_BUILD_DATA = {
+  loomVersion: '1.14.10',
+  loaderVersion: '0.18.2',
+  fabricApiVersion: null,
+  mappingMode: 'yarn',
+  yarnVersion: null,
+  gradleVersion: '9.3.0',
 };
 
-const VERIFIED_FORGE_BUILD_DATA = {
-  default: {
-    forgeGradleVersion: '[6.0,6.2)',
-    toolchainResolverVersion: '0.5.0',
-    gradleVersion: '8.1.1',
-    forgeVersion: '52.1.14',
-    loaderVersion: '[52,)',
-  },
-  '1.21': {
-    forgeVersion: '51.0.33',
-    loaderVersion: '[51,)',
-  },
-  '1.21.1': {
-    forgeVersion: '52.1.14',
-    loaderVersion: '[52,)',
-  },
-  '1.21.4': {
-    forgeVersion: '54.1.13',
-    loaderVersion: '[54,)',
-  },
-  '1.21.11': {
-    forgeVersion: '61.1.3',
-    loaderVersion: '[61,)',
-  },
-  '26.1': {
-    forgeVersion: '62.0.0',
-    loaderVersion: '[62,)',
-  },
-  '26.1.1': {
-    forgeVersion: '63.0.1',
-    loaderVersion: '[63,)',
-  },
+const DEFAULT_FORGE_BUILD_DATA = {
+  forgeGradleVersion: '6.0.38',
+  toolchainResolverVersion: '0.9.0',
+  gradleVersion: '8.12.1',
+  forgeVersion: '52.1.14',
+  loaderVersion: '[52,)',
+};
+
+const DEFAULT_NEOFORGE_BUILD_DATA = {
+  userdevVersion: '7.0.120',
+  gradleVersion: '8.12.1',
+  neoforgeVersion: '21.1.107',
+  loaderVersion: '[1,)',
 };
 
 function safeModId(modName) {
@@ -1599,24 +1786,45 @@ function getJavaVersionEnumName(javaVersion) {
 }
 
 function getFabricBuildData(version) {
-  return { ...VERIFIED_FABRIC_BUILD_DATA.default, ...(VERIFIED_FABRIC_BUILD_DATA[version] || {}) };
+  return { ...DEFAULT_FABRIC_BUILD_DATA, ...(RESEARCHED_FABRIC_BUILD_DATA[version] || {}) };
 }
 
 function getForgeBuildData(version) {
-  return { ...VERIFIED_FORGE_BUILD_DATA.default, ...(VERIFIED_FORGE_BUILD_DATA[version] || {}) };
+  return { ...DEFAULT_FORGE_BUILD_DATA, ...(RESEARCHED_FORGE_BUILD_DATA[version] || {}) };
 }
 
 
 
 function getFabricBuildData(version) {
-  return { ...VERIFIED_FABRIC_BUILD_DATA.default, ...(VERIFIED_FABRIC_BUILD_DATA[version] || {}) };
+  return { ...DEFAULT_FABRIC_BUILD_DATA, ...(RESEARCHED_FABRIC_BUILD_DATA[version] || {}) };
 }
 function getForgeBuildData(version) {
-  return { ...VERIFIED_FORGE_BUILD_DATA.default, ...(VERIFIED_FORGE_BUILD_DATA[version] || {}) };
+  return { ...DEFAULT_FORGE_BUILD_DATA, ...(RESEARCHED_FORGE_BUILD_DATA[version] || {}) };
+}
+function getNeoForgeBuildData(version) {
+  return { ...DEFAULT_NEOFORGE_BUILD_DATA, ...(RESEARCHED_NEOFORGE_BUILD_DATA[version] || {}) };
+}
+function getFabricYarnFallback(version) {
+  const key = String(version || '');
+  if (key === '1.21.11') return '1.21.11+build.4';
+  if (key === '1.21.10') return '1.21.10+build.3';
+  if (key === '1.21.4') return '1.21.4+build.8';
+  if (key === '1.21.2') return '1.21.2+build.1';
+  if (key === '1.21.1') return '1.21.1+build.3';
+  if (key === '1.21') return '1.21+build.9';
+  return null;
+}
+function isValidYarnVersion(version) {
+  return /^\d+\.\d+(?:\.\d+)?\+build\.\d+$/.test(String(version || ''));
 }
 function isFabricNonObfuscatedVersion(version) { return /^26\./.test(String(version||'')); }
 function getTargetMappingMode(loader, version) {
-  if (loader === 'fabric') { const f = getFabricBuildData(version); return f.mappingMode || 'official'; }
+  if (loader === 'fabric') {
+    const f = getFabricBuildData(version);
+    if (f.mappingMode === 'none') return 'none';
+    if (isValidYarnVersion(f.yarnVersion) || isValidYarnVersion(getFabricYarnFallback(version)) || f.mappingMode === 'yarn') return 'yarn';
+    return 'yarn';
+  }
   if (loader === 'forge' || loader === 'neoforge') return 'official';
   return 'official';
 }
@@ -1632,9 +1840,8 @@ function buildGradle(loader, version, modName) {
 
   if (loader === 'fabric') {
     const fabric = getFabricBuildData(version);
-    const mappingMode = fabric.mappingMode || 'official';
-    const loomPluginId = mappingMode === 'none' ? 'net.fabricmc.fabric-loom' : 'net.fabricmc.fabric-loom-remap';
-    const dependencyConfig = mappingMode === 'none' ? 'implementation' : 'modImplementation';
+    const mappingMode = getTargetMappingMode(loader, version);
+    const loomPluginId = 'net.fabricmc.fabric-loom';
     const mappingsLine = mappingMode === 'official'
       ? '    mappings loom.officialMojangMappings()'
       : mappingMode === 'yarn'
@@ -1660,8 +1867,8 @@ repositories {
 dependencies {
     minecraft "com.mojang:minecraft:\${project.minecraft_version}"
 ${mappingsLine}
-    ${dependencyConfig} "net.fabricmc:fabric-loader:\${project.loader_version}"
-${fabric.fabricApiVersion ? `    ${dependencyConfig} "net.fabricmc.fabric-api:fabric-api:\${project.fabric_version}"` : '    // Add Fabric API here if your generated code needs it.'}
+    implementation "net.fabricmc:fabric-loader:\${project.loader_version}"
+    // Add Fabric API here only if your generated code imports net.fabricmc.fabric.api.*.
 }
 
 processResources {
@@ -1772,7 +1979,7 @@ publishing {
   }
 
   return `plugins {
-    id 'net.neoforged.gradle.userdev' version '7.0.+'
+    id 'net.neoforged.gradle.userdev' version '${getNeoForgeBuildData(version).userdevVersion}'
 }
 
 version = '1.0.0'
@@ -1782,7 +1989,7 @@ base { archivesName = '${modName.toLowerCase()}' }
 minecraft { version = '${version}' }
 
 dependencies {
-    implementation "net.neoforged:neoforge:${version}.0"
+    implementation "net.neoforged:neoforge:${getNeoForgeBuildData(version).neoforgeVersion}"
 }
 
 java {
@@ -1843,13 +2050,13 @@ org.gradle.parallel=true
 minecraft_version=${version}
 loader_version=${fabric.loaderVersion}
 loom_version=${fabric.loomVersion}
-yarn_mappings=${fabric.yarnVersion || ''}
+yarn_mappings=${isValidYarnVersion(fabric.yarnVersion) ? fabric.yarnVersion : (getFabricYarnFallback(version) || '')}
 mod_version=1.0.0
 java_version=${javaVersion}
 maven_group=com.minecraftmod
 archives_base_name=${archiveName}
 mod_id=${archiveName}
-${fabric.fabricApiVersion ? `fabric_version=${fabric.fabricApiVersion}` : '# fabric_version=<add a verified Fabric API version if your mod needs Fabric API>'}`;
+# fabric_version=${fabric.fabricApiVersion || '<add a verified Fabric API version if your mod needs Fabric API>'}`;
   }
 
   if (loader === 'forge') {
@@ -1941,10 +2148,15 @@ description="Generated by CodexMC"
 
 
 // â”€â”€ Gradle Wrapper generators â”€â”€
-function gradleWrapperProperties(loader) {
-  const distributionUrl = loader === 'forge'
-    ? 'https\\://services.gradle.org/distributions/gradle-8.1.1-bin.zip'
-    : 'https\\://services.gradle.org/distributions/gradle-9.3.0-bin.zip';
+function gradleWrapperProperties(loader, version) {
+  const researchedGradle = loader === 'fabric'
+    ? getFabricBuildData(version).gradleVersion
+    : loader === 'forge'
+      ? getForgeBuildData(version).gradleVersion
+      : loader === 'neoforge'
+        ? getNeoForgeBuildData(version).gradleVersion
+      : '8.12.1';
+  const distributionUrl = `https\\://services.gradle.org/distributions/gradle-${researchedGradle || '8.12.1'}-bin.zip`;
   return `distributionBase=GRADLE_USER_HOME
 distributionPath=wrapper/dists
 distributionUrl=${distributionUrl}
@@ -2365,7 +2577,7 @@ function generateProjectZip(loader, version, modName = "Example Mod") {
   zip.file("gradle.properties", generateGradleProperties(loader, version, modId));
   zip.file("gradlew", gradlewScript());
   zip.file("gradlew.bat", gradlewBatScript());
-  zip.file("gradle/wrapper/gradle-wrapper.properties", gradleWrapperProperties(loader));
+  zip.file("gradle/wrapper/gradle-wrapper.properties", gradleWrapperProperties(loader, version));
   zip.file("gradle/wrapper/gradle-wrapper.jar", gradleWrapperJarBase64(), { base64: true });
 
   // Source structure
@@ -2504,6 +2716,40 @@ function renderBuildAttemptLines(logEl, attempts) {
   });
 }
 
+function renderActivityConsole(logEl, entries) {
+  if (!logEl) return;
+  logEl.innerHTML = '';
+  const list = Array.isArray(entries) ? entries.slice(-40) : [];
+  if (!list.length) {
+    logEl.innerHTML = '<div class="build-activity-line">Waiting for worker activity...</div>';
+    return;
+  }
+  list.forEach(entry => {
+    const line = document.createElement('div');
+    line.className = 'build-activity-line';
+    const time = entry?.time ? new Date(entry.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '--:--:--';
+    line.innerHTML = `<strong>${escapeHtml(time)}</strong> ${escapeHtml(entry?.message || '')}`;
+    logEl.appendChild(line);
+  });
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function buildResearchSummary(loader, version) {
+  if (loader === 'fabric') {
+    const data = getFabricBuildData(version);
+    return `Researched from official sources: Gradle ${data.gradleVersion}, loader ${data.loaderVersion}, loom ${data.loomVersion}${data.yarnVersion ? `, Yarn ${data.yarnVersion}` : ''}${data.fabricApiVersion ? `, Fabric API ${data.fabricApiVersion}` : ''}`;
+  }
+  if (loader === 'forge') {
+    const data = getForgeBuildData(version);
+    return `Researched from official sources: Gradle ${data.gradleVersion}, Forge ${data.forgeVersion}, ForgeGradle ${data.forgeGradleVersion}`;
+  }
+  if (loader === 'neoforge') {
+    const data = getNeoForgeBuildData(version);
+    return `Researched from official sources: Gradle ${data.gradleVersion}, NeoForge ${data.neoforgeVersion}, userdev ${data.userdevVersion}`;
+  }
+  return '';
+}
+
 function appendBuildLog(progress, title, logText) {
   if (!logText) return;
   const det = document.createElement('details');
@@ -2512,70 +2758,23 @@ function appendBuildLog(progress, title, logText) {
   progress.appendChild(det);
 }
 
-function createGeneratedProject(loader, version, modName, fullText) {
-  const files = {};
-  const modId = safeModId(modName);
-
-  // Add scaffold files from build functions
-  files['build.gradle']       = buildGradle(loader, version, modName);
-  files['settings.gradle']    = settingsGradle(loader, version, modName);
-  files['gradle.properties']  = gradleProps(loader, version, modName);
-  files['gradlew']            = gradlewScript();
-  files['gradlew.bat']        = gradlewBatScript();
-  files['gradle/wrapper/gradle-wrapper.properties'] = gradleWrapperProperties(loader);
-  files['gradle/wrapper/gradle-wrapper.jar'] = { encoding: 'base64', content: gradleWrapperJarBase64() };
-
-  if (loader === 'fabric') {
-    const ep = `com.example.${modId}.${modName.replace(/\s+/g,'')}`;
-    files['src/main/resources/fabric.mod.json'] = JSON.stringify(fabricModJson(version, modName, [ep]), null, 2);
-  } else if (loader === 'forge') {
-    files['src/main/resources/META-INF/mods.toml'] = forgeModsToml(version, modName);
-  } else if (loader === 'neoforge') {
-    files['src/main/resources/META-INF/mods.toml'] = neoforgeModsToml(version, modName);
-  }
-
-  // Parse code blocks from AI response — each block may start with // File: <path>
-  const re = /```(?:\w*)\n([\s\S]*?)```/g;
-  let m;
-  while ((m = re.exec(fullText)) !== null) {
-    const body = m[1];
-    const pathMatch = body.match(/^\/\/\s*File:\s*(.+?)\s*\n/i);
-    if (pathMatch) {
-      const filePath = pathMatch[1].trim();
-      const content = body.slice(pathMatch[0].length).trimEnd();
-      files[filePath] = content;
-    } else {
-      // No path comment — guess from content
-      const isGradle   = /^(plugins|dependencies|repositories)\s*\{/m.test(body);
-      const isProps    = /^minecraft_version\s*=/m.test(body);
-      const isJson     = body.trimStart().startsWith('{');
-      if      (isGradle && /settings/i.test(body)) files['settings.gradle']   = body.trimEnd();
-      else if (isGradle)                            files['build.gradle']      = body.trimEnd();
-      else if (isProps)                             files['gradle.properties'] = body.trimEnd();
-      else if (isJson && /modId|mod_id|fabric/i.test(body))
-        files['src/main/resources/fabric.mod.json'] = body.trimEnd();
-      else {
-        // Java file — try to extract package+class name
-        const pkgMatch   = body.match(/^package\s+([\w.]+)\s*;/m);
-        const classMatch = body.match(/(?:public\s+)?(?:class|interface|enum|record)\s+(\w+)/m);
-        if (pkgMatch && classMatch) {
-          const pkgPath = pkgMatch[1].replace(/\./g, '/');
-          files[`src/main/java/${pkgPath}/${classMatch[1]}.java`] = body.trimEnd();
-        }
-      }
-    }
-  }
-
-  return { files };
-}
-
 async function startBuild(btn, fullText, customModName = '') {
   const prompt = btn.closest('.build-prompt');
   const loader = getSelectedLoader();
   const version = getSelectedVersion();
+  await ensureBuildResearch(loader, version);
   const chat = getCurrentChat();
   const modName = resolveBuildModName(customModName, chat);
-  const project = createGeneratedProject(loader, version, modName, fullText);
+  const project = window.CodexBuildProject.createGeneratedProject({
+    fullText,
+    wrapperFiles: {
+      gradlew: gradlewScript(),
+      gradlewBat: gradlewBatScript(),
+      wrapperProperties: gradleWrapperProperties(loader, version),
+      wrapperJar: { encoding: 'base64', content: gradleWrapperJarBase64() },
+    },
+  });
+  const missingFiles = window.CodexBuildProject.getMissingProjectFiles(loader, project.files);
   const buildPayload = {
     loader,
     version,
@@ -2588,10 +2787,17 @@ async function startBuild(btn, fullText, customModName = '') {
   progress.className = 'build-progress';
   progress.innerHTML = `
     <div class="build-progress-title">Building <strong>${escapeHtml(loader)} ${escapeHtml(version)}</strong> mod — <strong>${escapeHtml(modName)}</strong></div>
+    <div class="build-source-note">${escapeHtml(buildResearchSummary(loader, version))}</div>
     <div class="build-log" id="blog-${Date.now()}"></div>
+    <div class="build-activity-console">
+      <div class="build-activity-head">Live Activity</div>
+      <div class="build-activity-log"></div>
+    </div>
   `;
   prompt.replaceWith(progress);
   const log = progress.querySelector('.build-log');
+  const activityLogEl = progress.querySelector('.build-activity-log');
+  renderActivityConsole(activityLogEl, [{ time: new Date().toISOString(), message: 'Prepared project files and queued research-backed build.' }]);
 
   function addLine(text, state) {
     const l = document.createElement('div');
@@ -2603,6 +2809,12 @@ async function startBuild(btn, fullText, customModName = '') {
   }
 
   addLine('Project files prepared from AI response.', 'done');
+  if (missingFiles.length) {
+    addLine(`Build stopped: the AI did not generate the required project files: ${missingFiles.join(', ')}`, 'error');
+    appendBuildLog(progress, 'What To Regenerate', `Ask the AI to regenerate the full ${loader} project and include these files explicitly:\n${missingFiles.join('\n')}`);
+    scrollToBottom();
+    return;
+  }
   const reqLine = addLine('Starting build worker on server...', 'running');
 
   function triggerWorker(jobId) {
@@ -2735,6 +2947,7 @@ async function startBuild(btn, fullText, customModName = '') {
         throw new Error(sj.message || `Status HTTP ${sr.status}`);
       }
       status = sj;
+      renderActivityConsole(activityLogEl, status.activityLog);
 
       if (Array.isArray(status.attempts) && status.attempts.length > renderedAttempts) {
         renderBuildAttemptLines(log, status.attempts.slice(renderedAttempts));
@@ -2808,6 +3021,14 @@ async function startBuild(btn, fullText, customModName = '') {
   }
   scrollToBottom();
 }
+
+function getSelectedSetup() {
+  return {
+    loader: document.getElementById("loader-sel")?.value,
+    mcVersion: document.getElementById("version-sel")?.value
+  };
+}
+
 </script>
 </body>
 </html>

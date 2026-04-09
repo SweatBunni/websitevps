@@ -2,114 +2,96 @@ import { getLatestStatus, putJson, putStatus, putText } from './_lib/build-store
 import { sanitizeFiles } from './_lib/sanitize-files.mjs';
 import { runBuildJobInput, runStoredBuildJob } from './_lib/build-job-runner.mjs';
 import { scheduleBackgroundTask } from './_lib/runtime-utils.mjs';
-
-function json(body, init = {}) {
-  return Response.json(body, {
-    status: init.status || 200,
-    headers: {
-      'Cache-Control': 'no-store',
-      ...(init.headers || {}),
-    },
-  });
-}
+import { getSearchParam, jsonResponse, methodNotAllowed, parseJsonRequest } from './_lib/http-utils.mjs';
 
 export default async function handler(request) {
   try {
     if (request.method !== 'POST' && request.method !== 'GET') {
-      return json({ message: 'Method not allowed.' }, { status: 405 });
+      return methodNotAllowed();
     }
 
-    let jobId = '';
-    let directInput = null;
-    if (request.method === 'POST') {
-      let payload;
-      try {
-        payload = await request.json();
-      } catch {
-        return json({ message: 'Invalid JSON body.' }, { status: 400 });
-      }
-      jobId = typeof payload.jobId === 'string' ? payload.jobId : '';
-      if (payload && typeof payload === 'object' && payload.files && typeof payload.files === 'object') {
-        try {
-          directInput = {
-            jobId,
-            loader: typeof payload.loader === 'string' ? payload.loader : '',
-            version: typeof payload.version === 'string' ? payload.version : '',
-            modName: typeof payload.modName === 'string' ? payload.modName : 'MinecraftMod',
-            conversation: Array.isArray(payload.conversation) ? payload.conversation : [],
-            files: sanitizeFiles(payload.files),
-            createdAt: typeof payload.createdAt === 'string' && payload.createdAt ? payload.createdAt : new Date().toISOString(),
-          };
-        } catch (error) {
-          return json({ message: error.message || 'Invalid build worker files payload.' }, { status: 400 });
-        }
-      }
-    } else {
-      const { searchParams } = new URL(request.url);
-      jobId = searchParams.get('jobId') || '';
+    const resolved = request.method === 'POST'
+      ? await resolvePostRequest(request)
+      : { jobId: getSearchParam(request, 'jobId'), directInput: null };
+
+    if (resolved.response) {
+      return resolved.response;
     }
 
+    const { jobId, directInput } = resolved;
     if (!jobId) {
-      return json({ message: 'jobId is required.' }, { status: 400 });
+      return jsonResponse({ message: 'jobId is required.' }, { status: 400 });
     }
 
     let status = await getLatestStatusWithRetry(jobId, directInput ? 2 : 10, directInput ? 300 : 1000);
     if (!status && directInput) {
-      status = await bootstrapDirectJob(jobId, directInput);
+      status = await createDirectBootstrapStatus(jobId, directInput);
     }
     if (!status) {
-      return json({ message: 'Build job not found.' }, { status: 404 });
+      return jsonResponse({ message: 'Build job not found.' }, { status: 404 });
     }
 
     if (status.status === 'completed' || status.status === 'failed') {
-      return json({ jobId, status: status.status, message: 'Build job already finished.' });
+      return jsonResponse({ jobId, status: status.status, message: 'Build job already finished.' });
     }
 
     if (shouldUseVercelSourceOnlyMode() && directInput) {
-      const completedAt = new Date().toISOString();
-      const message = 'Vercel deployments cannot reliably run this Gradle JAR build within function time limits. Download the generated sources instead, or move builds to a dedicated backend.';
-      await putJson(jobId, 'files.json', directInput.files);
-      await putText(jobId, 'build.log', message);
-      await putStatus(jobId, {
-        ...(status || {}),
-        jobId,
-        status: 'failed',
-        loader: directInput.loader,
-        version: directInput.version,
-        modName: directInput.modName,
-        attempts: status?.attempts || [],
-        message,
-        buildLogTail: message,
-        createdAt: directInput.createdAt,
-        completedAt,
-        updatedAt: completedAt,
-        provider: 'vercel',
-      });
-      return json({ jobId, status: 'failed', message }, { status: 200 });
+      const sourceOnlyMessage = 'Vercel deployments cannot reliably run this Gradle JAR build within function time limits. Download the generated sources instead, or move builds to a dedicated backend.';
+      await markSourceOnlyFailure(jobId, directInput, status, sourceOnlyMessage);
+      return jsonResponse({ jobId, status: 'failed', message: sourceOnlyMessage });
     }
 
     scheduleBackgroundTask(runWorkerJob(jobId, directInput, status));
-
-    return json({
-      jobId,
-      status: 'started',
-      message: 'Build worker accepted.',
-    }, { status: 202 });
+    return jsonResponse({ jobId, status: 'started', message: 'Build worker accepted.' }, { status: 202 });
   } catch (error) {
-    return json({ message: error?.message || 'Unexpected build worker error.' }, { status: 500 });
+    return jsonResponse({ message: error?.message || 'Unexpected build worker error.' }, { status: 500 });
+  }
+}
+
+async function resolvePostRequest(request) {
+  const parsed = await parseJsonRequest(request);
+  if (!parsed.ok) {
+    return { response: parsed.response };
+  }
+
+  const payload = parsed.value || {};
+  const jobId = typeof payload.jobId === 'string' ? payload.jobId : '';
+  if (!payload || typeof payload !== 'object' || !payload.files || typeof payload.files !== 'object') {
+    return { jobId, directInput: null };
+  }
+
+  try {
+    return {
+      jobId,
+      directInput: {
+        jobId,
+        loader: typeof payload.loader === 'string' ? payload.loader : '',
+        version: typeof payload.version === 'string' ? payload.version : '',
+        modName: typeof payload.modName === 'string' ? payload.modName : 'MinecraftMod',
+        conversation: Array.isArray(payload.conversation) ? payload.conversation : [],
+        files: sanitizeFiles(payload.files),
+        createdAt: typeof payload.createdAt === 'string' && payload.createdAt ? payload.createdAt : new Date().toISOString(),
+      },
+    };
+  } catch (error) {
+    return {
+      response: jsonResponse({ message: error.message || 'Invalid build worker files payload.' }, { status: 400 }),
+    };
   }
 }
 
 async function getLatestStatusWithRetry(jobId, attempts = 10, delayMs = 1000) {
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const s = await getLatestStatus(jobId);
-    if (s) return s;
-    if (attempt < attempts) await new Promise(resolve => setTimeout(resolve, delayMs));
+    const status = await getLatestStatus(jobId);
+    if (status) return status;
+    if (attempt < attempts) {
+      await delay(delayMs);
+    }
   }
   return null;
 }
 
-async function bootstrapDirectJob(jobId, input) {
+async function createDirectBootstrapStatus(jobId, input) {
   const now = new Date().toISOString();
   const status = {
     jobId,
@@ -118,13 +100,34 @@ async function bootstrapDirectJob(jobId, input) {
     version: input.version,
     modName: input.modName,
     attempts: [],
+    activityLog: [{ time: now, message: 'Worker accepted the job and is preparing to start.' }],
     createdAt: input.createdAt || now,
     updatedAt: now,
     provider: 'vercel',
   };
-
   await putStatus(jobId, status);
   return status;
+}
+
+async function markSourceOnlyFailure(jobId, input, status, message) {
+  const completedAt = new Date().toISOString();
+  await putJson(jobId, 'files.json', input.files);
+  await putText(jobId, 'build.log', message);
+  await putStatus(jobId, {
+    ...(status || {}),
+    jobId,
+    status: 'failed',
+    loader: input.loader,
+    version: input.version,
+    modName: input.modName,
+    attempts: status?.attempts || [],
+    message,
+    buildLogTail: message,
+    createdAt: input.createdAt,
+    completedAt,
+    updatedAt: completedAt,
+    provider: 'vercel',
+  });
 }
 
 async function runWorkerJob(jobId, directInput, status) {
@@ -149,6 +152,9 @@ function shouldUseVercelSourceOnlyMode() {
   if (String(process.env.ENABLE_VERCEL_JAR_BUILD || '').toLowerCase() === 'true') {
     return false;
   }
-
   return Boolean(process.env.VERCEL) && process.env.VERCEL_ENV !== 'development';
+}
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }

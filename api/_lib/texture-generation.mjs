@@ -2,7 +2,7 @@ import path from 'node:path';
 
 const MAX_TEXTURE_TARGETS = 3;
 
-// Cache the image-generation agent ID per API key within a function instance.
+// Cache the image-generation agent ID per API key/model within a function instance.
 // This avoids creating a new agent on every texture generation call.
 const agentIdCache = new Map();
 
@@ -48,7 +48,9 @@ export async function enrichProjectWithGeneratedTextures({ apiKey, loader, versi
 
 function detectTextureTargets({ loader, modId, files }) {
   const targets = new Map();
-  const textEntries = Object.entries(files).filter(([, file]) => file && file.encoding !== 'base64' && typeof file.content === 'string');
+  const textEntries = Object.entries(files)
+    .map(([filePath, file]) => [filePath, normalizeTextFile(file)])
+    .filter(([, file]) => file);
 
   for (const [filePath, file] of textEntries) {
     const normalizedPath = filePath.replace(/\\/g, '/');
@@ -58,12 +60,16 @@ function detectTextureTargets({ loader, modId, files }) {
     collectTargets(targets, content, 'item', /Registr(?:y|ies)\.ITEM[\s\S]{0,260}?(?:Identifier\.of|new Identifier|ResourceLocation\.fromNamespaceAndPath|new ResourceLocation)\s*\([^,\n]+,\s*"([a-z0-9_/-]+)"/g);
     collectTargets(targets, content, 'block', /(?:DeferredRegister\.Blocks|DeferredBlock<|RegistryObject<\s*Block|BLOCKS\.register)\b[\s\S]{0,160}?"([a-z0-9_/-]+)"/g);
     collectTargets(targets, content, 'item', /(?:DeferredRegister\.Items|DeferredItem<|RegistryObject<\s*Item|ITEMS\.register)\b[\s\S]{0,160}?"([a-z0-9_/-]+)"/g);
+    collectTargets(targets, content, 'block', /(?:BlockItem\s*\(\s*[A-Z0-9_]+\s*,[\s\S]{0,80}?"([a-z0-9_/-]+)"|new\s+Block\s*\([\s\S]{0,120}?"([a-z0-9_/-]+)")/g);
+    collectTargets(targets, content, 'item', /(?:new\s+Item\s*\(|Item\.Settings[\s\S]{0,120}?"([a-z0-9_/-]+)")/g);
 
     if (/Blocks?\.java$/i.test(normalizedPath)) {
       collectTargets(targets, content, 'block', /"([a-z0-9_/-]+)"/g);
     } else if (/Items?\.java$/i.test(normalizedPath)) {
       collectTargets(targets, content, 'item', /"([a-z0-9_/-]+)"/g);
     }
+
+    collectTargetsFromResourceFile(targets, normalizedPath, content, modId);
   }
 
   const list = Array.from(targets.values())
@@ -82,13 +88,53 @@ function detectTextureTargets({ loader, modId, files }) {
 function collectTargets(targets, content, kind, regex) {
   let match;
   while ((match = regex.exec(content)) !== null) {
-    const id = sanitizeTextureId(match[1]);
+    const rawId = match.slice(1).find(Boolean);
+    const id = sanitizeTextureId(rawId);
     if (!id) continue;
     const key = `${kind}:${id}`;
     if (!targets.has(key)) {
       targets.set(key, { kind, id });
     }
   }
+}
+
+function collectTargetsFromResourceFile(targets, normalizedPath, content, modId) {
+  const blockModelMatch = normalizedPath.match(new RegExp(`^src/main/resources/assets/${escapeRegExp(modId)}/models/block/([a-z0-9_/-]+)\\.json$`, 'i'));
+  if (blockModelMatch) {
+    const id = sanitizeTextureId(blockModelMatch[1]);
+    if (id) targets.set(`block:${id}`, { kind: 'block', id });
+  }
+
+  const itemModelMatch = normalizedPath.match(new RegExp(`^src/main/resources/assets/${escapeRegExp(modId)}/models/item/([a-z0-9_/-]+)\\.json$`, 'i'));
+  if (itemModelMatch && /minecraft:item\/generated|minecraft:item\/handheld/i.test(content)) {
+    const id = sanitizeTextureId(itemModelMatch[1]);
+    if (id) targets.set(`item:${id}`, { kind: 'item', id });
+  }
+
+  const blockTextureRefs = Array.from(content.matchAll(/"(?:all|top|bottom|side|end|particle|north|south|east|west|up|down)"\s*:\s*"[^"]*?:block\/([a-z0-9_/-]+)"/g));
+  blockTextureRefs.forEach(match => {
+    const id = sanitizeTextureId(match[1]);
+    if (id) targets.set(`block:${id}`, { kind: 'block', id });
+  });
+
+  const itemTextureRefs = Array.from(content.matchAll(/"layer\d+"\s*:\s*"[^"]*?:item\/([a-z0-9_/-]+)"/g));
+  itemTextureRefs.forEach(match => {
+    const id = sanitizeTextureId(match[1]);
+    if (id) targets.set(`item:${id}`, { kind: 'item', id });
+  });
+}
+
+function normalizeTextFile(file) {
+  if (typeof file === 'string') {
+    return { encoding: 'utf8', content: file };
+  }
+  if (!file || file.encoding === 'base64' || typeof file.content !== 'string') {
+    return null;
+  }
+  return {
+    encoding: 'utf8',
+    content: file.content,
+  };
 }
 
 function inferFallbackKind(loader, textEntries) {
@@ -169,61 +215,68 @@ async function createImageAgent(apiKey, model) {
 }
 
 async function generateTextureImage({ apiKey, prompt }) {
-  const model = process.env.MISTRAL_TEXTURE_MODEL || 'mistral-medium-latest';
+  const model = process.env.MISTRAL_TEXTURE_MODEL || 'mistral-medium-2505';
+  const cacheKey = `${apiKey}:${model}`;
   const baseHeaders = {
     'Content-Type': 'application/json',
     Authorization: `Bearer ${apiKey}`,
     Accept: 'application/json',
   };
 
-  // Step 1: Reuse or create an image-generation agent (cached per API key)
-  let agentId = agentIdCache.get(apiKey);
-  if (!agentId) {
-    agentId = await createImageAgent(apiKey, model);
-    agentIdCache.set(apiKey, agentId);
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    let agentId = agentIdCache.get(cacheKey);
+    if (!agentId) {
+      agentId = await createImageAgent(apiKey, model);
+      agentIdCache.set(cacheKey, agentId);
+    }
+
+    const convResponse = await fetch('https://api.mistral.ai/v1/conversations', {
+      method: 'POST',
+      headers: baseHeaders,
+      body: JSON.stringify({
+        agent_id: agentId,
+        inputs: prompt,
+        stream: false,
+        store: false,
+      }),
+    });
+
+    const convText = await convResponse.text();
+    let convJson = {};
+    try { convJson = JSON.parse(convText); } catch { convJson = {}; }
+
+    if (!convResponse.ok) {
+      agentIdCache.delete(cacheKey);
+      const message = convJson?.message || convJson?.error?.message || convJson?.error || convText || `Texture generation failed with HTTP ${convResponse.status}.`;
+      if (attempt < 2) continue;
+      throw new Error(message);
+    }
+
+    const fileId = findFirstFileId(convJson);
+    if (!fileId) {
+      agentIdCache.delete(cacheKey);
+      if (attempt < 2) continue;
+      throw new Error('Texture generation did not return an image file id.');
+    }
+
+    const fileResponse = await fetch(`https://api.mistral.ai/v1/files/${encodeURIComponent(fileId)}/content`, {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        Accept: 'image/png,application/octet-stream',
+      },
+    });
+
+    if (!fileResponse.ok) {
+      const message = await fileResponse.text().catch(() => '');
+      agentIdCache.delete(cacheKey);
+      if (attempt < 2) continue;
+      throw new Error(message || `Could not download generated texture (HTTP ${fileResponse.status}).`);
+    }
+
+    return Buffer.from(await fileResponse.arrayBuffer());
   }
 
-  // Step 2: Start a conversation with that agent
-  const convResponse = await fetch('https://api.mistral.ai/v1/conversations', {
-    method: 'POST',
-    headers: baseHeaders,
-    body: JSON.stringify({
-      agent_id: agentId,
-      inputs: prompt,
-      stream: false,
-    }),
-  });
-
-  const convText = await convResponse.text();
-  let convJson = {};
-  try { convJson = JSON.parse(convText); } catch { convJson = {}; }
-
-  if (!convResponse.ok) {
-    // If agent was deleted/expired, clear cache and let next call recreate it
-    if (convResponse.status === 404) agentIdCache.delete(apiKey);
-    const message = convJson?.message || convJson?.error?.message || convJson?.error || convText || `Texture generation failed with HTTP ${convResponse.status}.`;
-    throw new Error(message);
-  }
-
-  const fileId = findFirstFileId(convJson);
-  if (!fileId) {
-    throw new Error('Texture generation did not return an image file id.');
-  }
-
-  // Step 3: Download the generated image
-  const fileResponse = await fetch(`https://api.mistral.ai/v1/files/${encodeURIComponent(fileId)}/content`, {
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      Accept: 'image/png,application/octet-stream',
-    },
-  });
-
-  if (!fileResponse.ok) {
-    const message = await fileResponse.text().catch(() => '');
-    throw new Error(message || `Could not download generated texture (HTTP ${fileResponse.status}).`);
-  }
-
-  return Buffer.from(await fileResponse.arrayBuffer());
+  throw new Error('Texture generation failed unexpectedly.');
 }
 
 function findFirstFileId(value) {
@@ -311,9 +364,12 @@ function mergeLangEntry(files, modId, target) {
   const langPath = `src/main/resources/assets/${modId}/lang/en_us.json`;
   let json = {};
   const existing = files[langPath];
-  if (existing && existing.encoding !== 'base64') {
+  const normalizedExisting = typeof existing === 'string'
+    ? { encoding: 'utf8', content: existing }
+    : existing;
+  if (normalizedExisting && normalizedExisting.encoding !== 'base64') {
     try {
-      json = JSON.parse(existing.content || '{}');
+      json = JSON.parse(normalizedExisting.content || '{}');
     } catch {
       json = {};
     }
@@ -357,6 +413,10 @@ function toDisplayName(id) {
     .filter(Boolean)
     .map(part => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ') || 'Generated Asset';
+}
+
+function escapeRegExp(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function safeModId(modName) {

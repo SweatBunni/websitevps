@@ -1,13 +1,16 @@
 import { executeBuildJob } from './build-common.mjs';
 import { getJson, getLatestStatus, putBytes, putJson, putStatus, putText } from './build-store.mjs';
 import { enrichProjectWithGeneratedTextures } from './texture-generation.mjs';
+import { getDeepBuildResearch } from './research-metadata.mjs';
+
+const STATUS_RETRY_ATTEMPTS = 10;
+const STATUS_RETRY_DELAY_MS = 1000;
 
 export async function runStoredBuildJob(jobId) {
-  const input = await getJsonWithRetry(jobId, 'input.json');
+  const input = await retry(() => getJson(jobId, 'input.json'));
   if (!input) {
     throw new Error('Build job input was not found.');
   }
-
   return runBuildJobInput(jobId, input);
 }
 
@@ -16,13 +19,13 @@ export async function runBuildJobInput(jobId, input) {
     throw new Error('Build job input was not provided.');
   }
 
-  const existing = await getLatestStatusWithRetry(jobId);
-  if (existing?.status === 'completed' || existing?.status === 'failed') {
+  const existing = await retry(() => getLatestStatus(jobId));
+  if (isFinalStatus(existing?.status)) {
     return existing;
   }
 
   const startedAt = new Date().toISOString();
-  await putStatus(jobId, {
+  await writeStatus(jobId, existing, {
     jobId,
     status: 'running',
     loader: input.loader,
@@ -33,81 +36,14 @@ export async function runBuildJobInput(jobId, input) {
     startedAt,
     workerStartedAt: startedAt,
     updatedAt: startedAt,
+    activityLog: appendActivity([], 'Worker started and is preparing the build.'),
     provider: 'vercel',
   });
 
   try {
-    const textureResult = await enrichProjectWithGeneratedTextures({
-      apiKey: process.env.MISTRAL_API_KEY,
-      loader: input.loader,
-      version: input.version,
-      modName: input.modName,
-      files: input.files,
-      conversation: input.conversation || [],
-    });
-
-    if (textureResult.generatedTextures.length || textureResult.textureWarnings.length) {
-      const latest = await getLatestStatus(jobId);
-      await putStatus(jobId, {
-        ...(latest || {}),
-        jobId,
-        status: 'running',
-        loader: input.loader,
-        version: input.version,
-        modName: input.modName,
-        attempts: existing?.attempts || [],
-        generatedTextures: textureResult.generatedTextures,
-        textureWarnings: textureResult.textureWarnings,
-        createdAt: input.createdAt,
-        startedAt,
-        updatedAt: new Date().toISOString(),
-        provider: 'vercel',
-      });
-    }
-
-    const result = await executeBuildJob({
-      apiKey: process.env.MISTRAL_API_KEY,
-      loader: input.loader,
-      version: input.version,
-      modName: input.modName,
-      files: input.files,
-      conversation: input.conversation || [],
-      onBuildStart: async ({ attemptNumber }) => {
-        const latest = await getLatestStatus(jobId);
-        await putStatus(jobId, {
-          ...(latest || {}),
-          jobId,
-          status: 'running',
-          loader: input.loader,
-          version: input.version,
-          modName: input.modName,
-          attempts: latest?.attempts || [],
-          createdAt: input.createdAt,
-          startedAt,
-          updatedAt: new Date().toISOString(),
-          buildLogTail: latest?.buildLogTail || '',
-          currentAttempt: attemptNumber,
-          provider: 'vercel',
-        });
-      },
-      onAttempt: async ({ attempts }) => {
-        const latest = await getLatestStatus(jobId);
-        await putStatus(jobId, {
-          ...(latest || {}),
-          jobId,
-          status: 'running',
-          loader: input.loader,
-          version: input.version,
-          modName: input.modName,
-          attempts,
-          createdAt: input.createdAt,
-          startedAt,
-          updatedAt: new Date().toISOString(),
-          buildLogTail: attempts[attempts.length - 1]?.logTail || '',
-          provider: 'vercel',
-        });
-      },
-    });
+    const researchBundle = await runResearchPhase(jobId, input, startedAt, existing);
+    const textureResult = await runTexturePhase(jobId, input, startedAt, existing);
+    const result = await runBuildPhase(jobId, input, startedAt, researchBundle);
 
     await putJson(jobId, 'files.json', result.files);
     if (result.buildLogTail) {
@@ -116,72 +52,234 @@ export async function runBuildJobInput(jobId, input) {
 
     if (result.success) {
       await putBytes(jobId, 'artifact.jar', result.jarBuffer, 'application/java-archive');
-      const completedAt = new Date().toISOString();
-      await putStatus(jobId, {
+      return finalizeSuccess(jobId, input, startedAt, result, textureResult);
+    }
+
+    return finalizeFailure(jobId, input, startedAt, result, textureResult);
+  } catch (error) {
+    return finalizeWorkerFailure(jobId, input, startedAt, error);
+  }
+}
+
+async function runResearchPhase(jobId, input, startedAt, existing) {
+  await appendStatusActivity(jobId, existing, input, startedAt, `Starting deep official-source research for ${input.loader} ${input.version}.`);
+  const researchBundle = await getDeepBuildResearch(input.loader, input.version, { timeBudgetMs: 115000 });
+  await appendStatusActivity(jobId, existing, input, startedAt, researchBundle?.summary || `Completed deep official-source research for ${input.loader} ${input.version}.`, {
+    buildResearch: researchBundle,
+  });
+  return researchBundle;
+}
+
+async function runTexturePhase(jobId, input, startedAt, existing) {
+  const textureResult = await enrichProjectWithGeneratedTextures({
+    apiKey: process.env.MISTRAL_API_KEY,
+    loader: input.loader,
+    version: input.version,
+    modName: input.modName,
+    files: input.files,
+    conversation: input.conversation || [],
+  });
+
+  if (textureResult.generatedTextures.length || textureResult.textureWarnings.length) {
+    const latest = await getLatestStatus(jobId);
+    await writeStatus(jobId, latest, {
+      ...(latest || {}),
+      jobId,
+      status: 'running',
+      loader: input.loader,
+      version: input.version,
+      modName: input.modName,
+      attempts: existing?.attempts || [],
+      generatedTextures: textureResult.generatedTextures,
+      textureWarnings: textureResult.textureWarnings,
+      createdAt: input.createdAt,
+      startedAt,
+      updatedAt: new Date().toISOString(),
+      activityLog: appendActivity(
+        latest?.activityLog,
+        textureResult.generatedTextures.length
+          ? `Generated ${textureResult.generatedTextures.length} texture asset(s).`
+          : `Texture generation finished with ${textureResult.textureWarnings.length} warning(s) and no new textures.${textureResult.textureWarnings[0] ? ` First warning: ${textureResult.textureWarnings[0]}` : ''}`,
+      ),
+      provider: 'vercel',
+    });
+  }
+
+  return textureResult;
+}
+
+async function runBuildPhase(jobId, input, startedAt, researchBundle) {
+  return executeBuildJob({
+    apiKey: process.env.MISTRAL_API_KEY,
+    loader: input.loader,
+    version: input.version,
+    modName: input.modName,
+    files: input.files,
+    conversation: input.conversation || [],
+    researchBundle,
+    onActivity: async ({ message, buildResearch }) => {
+      const latest = await getLatestStatus(jobId);
+      await writeStatus(jobId, latest, {
+        ...(latest || {}),
         jobId,
-        status: 'completed',
+        status: 'running',
         loader: input.loader,
         version: input.version,
         modName: input.modName,
-        attempts: result.attempts,
-        generatedTextures: textureResult.generatedTextures,
-        textureWarnings: textureResult.textureWarnings,
-        jarFileName: result.jarFileName,
-        buildLogTail: result.buildLogTail || '',
+        attempts: latest?.attempts || [],
         createdAt: input.createdAt,
         startedAt,
-        completedAt,
-        updatedAt: completedAt,
+        updatedAt: new Date().toISOString(),
+        buildResearch: buildResearch || latest?.buildResearch || null,
+        activityLog: appendActivity(latest?.activityLog, message),
         provider: 'vercel',
       });
-      return { status: 'completed' };
-    }
-
-    const failedAt = new Date().toISOString();
-    await putStatus(jobId, {
-      jobId,
-      status: 'failed',
-      loader: input.loader,
-      version: input.version,
-      modName: input.modName,
-      attempts: result.attempts,
-      generatedTextures: textureResult.generatedTextures,
-      textureWarnings: textureResult.textureWarnings,
-      message: result.message || 'Build failed.',
-      buildLogTail: result.buildLogTail || '',
-      createdAt: input.createdAt,
-      startedAt,
-      completedAt: failedAt,
-      updatedAt: failedAt,
-      provider: 'vercel',
-    });
-    return { status: 'failed' };
-  } catch (error) {
-    const failedAt = new Date().toISOString();
-    await putStatus(jobId, {
-      jobId,
-      status: 'failed',
-      loader: input.loader,
-      version: input.version,
-      modName: input.modName,
-      attempts: [],
-      message: error.message || 'Background build worker failed unexpectedly.',
-      createdAt: input.createdAt,
-      startedAt,
-      completedAt: failedAt,
-      updatedAt: failedAt,
-      provider: 'vercel',
-    });
-    return { status: 'failed' };
-  }
+    },
+    onBuildStart: async ({ attemptNumber }) => {
+      const latest = await getLatestStatus(jobId);
+      await writeStatus(jobId, latest, {
+        ...(latest || {}),
+        jobId,
+        status: 'running',
+        loader: input.loader,
+        version: input.version,
+        modName: input.modName,
+        attempts: latest?.attempts || [],
+        createdAt: input.createdAt,
+        startedAt,
+        updatedAt: new Date().toISOString(),
+        buildLogTail: latest?.buildLogTail || '',
+        activityLog: appendActivity(latest?.activityLog, `Starting Gradle attempt ${attemptNumber}.`),
+        currentAttempt: attemptNumber,
+        provider: 'vercel',
+      });
+    },
+    onAttempt: async ({ attempts }) => {
+      const latest = await getLatestStatus(jobId);
+      const latestAttempt = attempts[attempts.length - 1];
+      await writeStatus(jobId, latest, {
+        ...(latest || {}),
+        jobId,
+        status: 'running',
+        loader: input.loader,
+        version: input.version,
+        modName: input.modName,
+        attempts,
+        createdAt: input.createdAt,
+        startedAt,
+        updatedAt: new Date().toISOString(),
+        buildLogTail: latestAttempt?.logTail || '',
+        activityLog: appendActivity(latest?.activityLog, latestAttempt?.fixSummary ? `Applied AI repair: ${latestAttempt.fixSummary}` : `Completed attempt ${attempts.length}.`),
+        provider: 'vercel',
+      });
+    },
+  });
 }
 
-async function getJsonWithRetry(jobId, fileName, attempts = 10, delayMs = 1000) {
+async function finalizeSuccess(jobId, input, startedAt, result, textureResult) {
+  const completedAt = new Date().toISOString();
+  await putStatus(jobId, {
+    jobId,
+    status: 'completed',
+    loader: input.loader,
+    version: input.version,
+    modName: input.modName,
+    attempts: result.attempts,
+    generatedTextures: textureResult.generatedTextures,
+    textureWarnings: textureResult.textureWarnings,
+    jarFileName: result.jarFileName,
+    buildLogTail: result.buildLogTail || '',
+    activityLog: appendActivity((await getLatestStatus(jobId))?.activityLog, 'Build completed successfully and the JAR is ready.'),
+    createdAt: input.createdAt,
+    startedAt,
+    completedAt,
+    updatedAt: completedAt,
+    provider: 'vercel',
+  });
+  return { status: 'completed' };
+}
+
+async function finalizeFailure(jobId, input, startedAt, result, textureResult) {
+  const failedAt = new Date().toISOString();
+  await putStatus(jobId, {
+    jobId,
+    status: 'failed',
+    loader: input.loader,
+    version: input.version,
+    modName: input.modName,
+    attempts: result.attempts,
+    generatedTextures: textureResult.generatedTextures,
+    textureWarnings: textureResult.textureWarnings,
+    message: result.message || 'Build failed.',
+    buildLogTail: result.buildLogTail || '',
+    activityLog: appendActivity((await getLatestStatus(jobId))?.activityLog, `Build failed: ${result.message || 'unknown error'}`),
+    createdAt: input.createdAt,
+    startedAt,
+    completedAt: failedAt,
+    updatedAt: failedAt,
+    provider: 'vercel',
+  });
+  return { status: 'failed' };
+}
+
+async function finalizeWorkerFailure(jobId, input, startedAt, error) {
+  const failedAt = new Date().toISOString();
+  await putStatus(jobId, {
+    jobId,
+    status: 'failed',
+    loader: input.loader,
+    version: input.version,
+    modName: input.modName,
+    attempts: [],
+    message: error.message || 'Background build worker failed unexpectedly.',
+    activityLog: appendActivity((await getLatestStatus(jobId))?.activityLog, `Worker error: ${error.message || 'unexpected failure'}`),
+    createdAt: input.createdAt,
+    startedAt,
+    completedAt: failedAt,
+    updatedAt: failedAt,
+    provider: 'vercel',
+  });
+  return { status: 'failed' };
+}
+
+async function appendStatusActivity(jobId, existing, input, startedAt, message, extra = {}) {
+  const latest = await getLatestStatus(jobId);
+  await writeStatus(jobId, latest, {
+    ...(latest || {}),
+    jobId,
+    status: 'running',
+    loader: input.loader,
+    version: input.version,
+    modName: input.modName,
+    attempts: existing?.attempts || [],
+    createdAt: input.createdAt,
+    startedAt,
+    updatedAt: new Date().toISOString(),
+    activityLog: appendActivity(latest?.activityLog, message),
+    provider: 'vercel',
+    ...extra,
+  });
+}
+
+async function writeStatus(jobId, current, next) {
+  await putStatus(jobId, {
+    ...(current || {}),
+    ...next,
+  });
+}
+
+function appendActivity(existing, message) {
+  const next = Array.isArray(existing) ? existing.slice(-39) : [];
+  if (message) {
+    next.push({ time: new Date().toISOString(), message: String(message) });
+  }
+  return next;
+}
+
+async function retry(factory, attempts = STATUS_RETRY_ATTEMPTS, delayMs = STATUS_RETRY_DELAY_MS) {
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const value = await getJson(jobId, fileName);
-    if (value) {
-      return value;
-    }
+    const value = await factory();
+    if (value) return value;
     if (attempt < attempts) {
       await delay(delayMs);
     }
@@ -189,17 +287,8 @@ async function getJsonWithRetry(jobId, fileName, attempts = 10, delayMs = 1000) 
   return null;
 }
 
-async function getLatestStatusWithRetry(jobId, attempts = 10, delayMs = 1000) {
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const value = await getLatestStatus(jobId);
-    if (value) {
-      return value;
-    }
-    if (attempt < attempts) {
-      await delay(delayMs);
-    }
-  }
-  return null;
+function isFinalStatus(status) {
+  return status === 'completed' || status === 'failed';
 }
 
 function delay(ms) {
