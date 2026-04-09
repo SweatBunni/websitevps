@@ -1,6 +1,6 @@
 import { normalizeFileData } from './build-file-utils.mjs';
 
-const LOOM_SAFE_VERSION = '1.7.4';
+const LOOM_SAFE_VERSION = '1.14.10';
 
 export async function normalizeGeneratedFiles(files, loader, version, researchedBuild = null) {
   const changedFiles = [];
@@ -30,7 +30,7 @@ export async function normalizeGeneratedFiles(files, loader, version, researched
 
   if (loader === 'fabric' && files['build.gradle']) {
     const normalized = normalizeFileData(files['build.gradle']);
-    const loomFixed = normalizeFabricLoomPluginVersion(normalized.content);
+    const loomFixed = normalizeFabricLoomPluginVersion(normalized.content, researchedBuild);
     const cleaned = normalizeFabricBuildGradle(
       stripUnsupportedFabricLoomSettings(loomFixed, version),
       version,
@@ -123,17 +123,22 @@ function normalizeGradleWrapper(content, loader, researchedBuild = null) {
   return next;
 }
 
-function normalizeFabricLoomPluginVersion(content) {
+function normalizeFabricLoomPluginVersion(content, researchedBuild = null) {
+  const preferredVersion = String(researchedBuild?.loomVersion || LOOM_SAFE_VERSION).trim() || LOOM_SAFE_VERSION;
   return String(content || '').replace(
     /(id\s*[\("'](?:fabric-loom|net\.fabricmc\.fabric-loom)[\)"']\s+version\s+[\("'])([^"'\s)]+)([\)"'])/g,
     (match, prefix, version, suffix) => {
+      if (version === preferredVersion) {
+        return match;
+      }
       if (/-SNAPSHOT/i.test(version)) {
-        return `${prefix}${LOOM_SAFE_VERSION}${suffix}`;
+        return `${prefix}${preferredVersion}${suffix}`;
       }
       const [major = 0, minor = 0] = String(version).split('.').map(Number);
-      return major < 1 || (major === 1 && minor < 7)
-        ? `${prefix}${LOOM_SAFE_VERSION}${suffix}`
-        : match;
+      if (major < 1 || (major === 1 && minor < 14)) {
+        return `${prefix}${preferredVersion}${suffix}`;
+      }
+      return `${prefix}${preferredVersion}${suffix}`;
     },
   );
 }
