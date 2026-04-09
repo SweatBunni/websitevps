@@ -43,7 +43,22 @@ html, body {
 }
 
 /* ── LAYOUT ── */
-#app { display: flex; height: 100vh; width: 100vw; }
+#app { display: flex; height: 100vh; width: 100vw; position: relative; }
+
+#mobile-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s var(--ease);
+  z-index: 40;
+}
+#mobile-backdrop.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
 
 /* ── SIDEBAR ── */
 #sidebar {
@@ -638,8 +653,27 @@ details pre {
 
 /* mobile */
 @media (max-width: 640px) {
-  #sidebar { position: absolute; z-index: 50; height: 100vh; }
-  #sidebar.collapsed { transform: translateX(-100%); }
+  #app { width: 100%; }
+  #main { width: 100%; min-width: 0; }
+  #sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 50;
+    height: 100dvh;
+    width: min(86vw, 320px);
+    min-width: min(86vw, 320px);
+    max-width: min(86vw, 320px);
+    transform: translateX(0);
+    transition: transform 0.22s var(--ease);
+    box-shadow: 18px 0 36px rgba(0,0,0,0.4);
+  }
+  #sidebar.collapsed {
+    width: min(86vw, 320px);
+    min-width: min(86vw, 320px);
+    transform: translateX(-100%);
+  }
+  #mobile-backdrop { display: block; }
   .starters { grid-template-columns: 1fr; }
 }
 </style>
@@ -679,6 +713,8 @@ details pre {
       <div class="sidebar-foot-label">Minecraft Java AI</div>
     </div>
   </div>
+
+  <div id="mobile-backdrop" onclick="closeSidebar()"></div>
 
   <!-- MAIN -->
   <div id="main">
@@ -833,6 +869,8 @@ let state = {
   currentId: storedChats.length ? storedChats[storedChats.length - 1].id : null,
   isStreaming: false,
   sidebarOpen: true,
+  desktopSidebarOpen: true,
+  isMobileLayout: false,
   systemPrompt: readStoredText('mci_system', DEFAULT_SYSTEM),
 };
 
@@ -891,12 +929,22 @@ function onLoaderChange() {
 }
 
 window.addEventListener('DOMContentLoaded', () => {
+  syncResponsiveLayout(true);
   onLoaderChange();
   renderChatList();
   if (state.chats.length === 0) newChat();
   else {
     state.currentId = state.currentId || state.chats[state.chats.length - 1].id;
     showWelcome(true);
+  }
+  updateSidebarState();
+});
+
+window.addEventListener('resize', () => {
+  const nextIsMobile = isMobileLayout();
+  if (nextIsMobile !== state.isMobileLayout) {
+    syncResponsiveLayout();
+    updateSidebarState();
   }
 });
 
@@ -905,6 +953,25 @@ function getSelectedVersion() { return document.getElementById('version-sel').va
 
 function buildTargetContext(loader, version) {
   return `[Target: ${loader} ${version}]`;
+}
+
+function isMobileLayout() {
+  return window.matchMedia('(max-width: 640px)').matches;
+}
+
+function syncResponsiveLayout(force = false) {
+  const nextIsMobile = isMobileLayout();
+  if (force || nextIsMobile !== state.isMobileLayout) {
+    state.isMobileLayout = nextIsMobile;
+    state.sidebarOpen = nextIsMobile ? false : state.desktopSidebarOpen;
+  }
+}
+
+function updateSidebarState() {
+  const sidebar = document.getElementById('sidebar');
+  const backdrop = document.getElementById('mobile-backdrop');
+  if (sidebar) sidebar.classList.toggle('collapsed', !state.sidebarOpen);
+  if (backdrop) backdrop.classList.toggle('visible', state.isMobileLayout && state.sidebarOpen);
 }
 
 // ── BACKEND ──
@@ -982,8 +1049,19 @@ function buildModelMessages(messages) {
 
 // ── SIDEBAR / CHAT MANAGEMENT ──
 function toggleSidebar() {
-  state.sidebarOpen = !state.sidebarOpen;
-  document.getElementById('sidebar').classList.toggle('collapsed', !state.sidebarOpen);
+  if (state.isMobileLayout) {
+    state.sidebarOpen = !state.sidebarOpen;
+  } else {
+    state.desktopSidebarOpen = !state.desktopSidebarOpen;
+    state.sidebarOpen = state.desktopSidebarOpen;
+  }
+  updateSidebarState();
+}
+
+function closeSidebar() {
+  if (!state.isMobileLayout) return;
+  state.sidebarOpen = false;
+  updateSidebarState();
 }
 
 function renderChatList() {
@@ -1034,6 +1112,7 @@ function newChat() {
   showWelcome(true);
   document.getElementById('topbar-title').textContent = 'New Chat';
   saveChats();
+  closeSidebar();
   document.getElementById('input-box').focus();
 }
 
@@ -1046,6 +1125,7 @@ function loadChat(id) {
   chat.messages.filter(m => m.role !== 'system').forEach(m => appendMessage(m.role, m.content, false));
   document.getElementById('topbar-title').textContent = chat.title;
   renderChatList();
+  closeSidebar();
   scrollToBottom();
 }
 
@@ -1055,6 +1135,7 @@ function deleteChat(e, id) {
   saveChats();
   if (state.currentId === id) newChat();
   else renderChatList();
+  closeSidebar();
 }
 
 function getCurrentChat() { return state.chats.find(c => c.id === state.currentId); }
