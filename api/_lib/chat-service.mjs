@@ -2,45 +2,47 @@ import { getBuildResearch } from './research-metadata.mjs';
 import { rememberChatInteraction, retrieveRelevantMemories } from './site-memory.mjs';
 
 const DEFAULT_MODEL = 'qwen/qwen-2.5-coder-32b-instruct:free';
-const UPSTREAM_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const MAX_CHAT_RETRIES = 4;
+const DEFAULT_MAX_TOKENS = 4096;
+const DEFAULT_TEMPERATURE = 0.2;
+const NORMALIZED_CHUNK_SIZE = 320;
 
-export async function buildChatMessages({ messages, loader, version }) {
-  const latestUserMessage = getLatestUserMessage(messages);
+export async function buildChatRequest({ body }) {
+  const latestUserMessage = getLatestUserMessage(body.messages);
   const [researchMessage, memoryMessage] = await Promise.all([
-    createResearchMessage(loader, version),
-    createMemoryMessage(loader, version, latestUserMessage),
+    createResearchMessage(body.loader, body.version),
+    createMemoryMessage(body.loader, body.version, latestUserMessage),
   ]);
 
+  const baseMessages = Array.isArray(body.messages)
+    ? body.messages.filter(message => ['system', 'user', 'assistant'].includes(message?.role))
+    : [];
   const injectedMessages = [researchMessage, memoryMessage].filter(Boolean);
-  const filteredMessages = messages.filter(message => ['system', 'user', 'assistant'].includes(message?.role));
+  const messages = injectedMessages.length
+    ? [baseMessages[0], ...injectedMessages, ...baseMessages.slice(1)]
+    : baseMessages;
 
   return {
     latestUserMessage,
-    messages: injectedMessages.length
-      ? [filteredMessages[0], ...injectedMessages, ...filteredMessages.slice(1)]
-      : filteredMessages,
+    model: body.model || process.env.OPENROUTER_MODEL || DEFAULT_MODEL,
+    maxTokens: body.max_tokens || DEFAULT_MAX_TOKENS,
+    temperature: body.temperature ?? DEFAULT_TEMPERATURE,
+    messages,
   };
 }
 
-export async function requestStreamingChatCompletion({
+export async function completeChat({
   apiKey,
-  body,
+  model,
+  maxTokens,
+  temperature,
   messages,
 }) {
-  const model = body.model || process.env.OPENROUTER_MODEL || DEFAULT_MODEL;
-  const useStreaming = shouldUseStreaming(model);
-  const requestBody = {
-    model,
-    messages,
-    max_tokens: body.max_tokens || 4096,
-    temperature: body.temperature ?? 0.2,
-    stream: useStreaming,
-  };
+  let response;
 
-  const MAX_CHAT_RETRIES = 4;
-  let upstream;
-  for (let i = 0; i < MAX_CHAT_RETRIES; i++) {
-    upstream = await fetch(UPSTREAM_URL, {
+  for (let attempt = 0; attempt < MAX_CHAT_RETRIES; attempt += 1) {
+    response = await fetch(OPENROUTER_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -48,106 +50,52 @@ export async function requestStreamingChatCompletion({
         'HTTP-Referer': process.env.OPENROUTER_HTTP_REFERER || 'http://localhost:3000',
         'X-Title': process.env.OPENROUTER_APP_TITLE || 'CodexMC',
       },
-      body: JSON.stringify(requestBody),
+      body: JSON.stringify({
+        model,
+        messages,
+        max_tokens: maxTokens,
+        temperature,
+        stream: false,
+      }),
     });
 
-    if (upstream.status !== 429 && upstream.status !== 503) break;
-    if (i === MAX_CHAT_RETRIES - 1) break;
+    if (response.ok || !isRetryableStatus(response.status) || attempt === MAX_CHAT_RETRIES - 1) {
+      break;
+    }
 
-    const retryAfter = upstream.headers.get('retry-after');
-    const seconds = retryAfter ? Number(retryAfter) : null;
-    const backoffMs = (Number.isFinite(seconds) && seconds > 0)
-      ? Math.round(seconds * 1000)
-      : Math.min(30000, 5000 * (i + 1));
-    await new Promise(resolve => setTimeout(resolve, backoffMs));
+    await delay(resolveRetryDelayMs(response, attempt));
   }
 
-  return { model, upstream };
+  if (!response.ok) {
+    const message = await readErrorMessage(response);
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
+  }
+
+  const payload = await response.json().catch(() => ({}));
+  const usedModel = payload?.model || model;
+  const text = extractCompletionText(payload);
+  return { model: usedModel, text, payload };
 }
 
-export async function createChatStreamResponse({
-  upstream,
-  fallbackModel,
+export async function createNormalizedChatResponse({
+  model,
+  text,
   loader,
   version,
   latestUserMessage,
 }) {
-  const contentType = String(upstream.headers.get('content-type') || '').toLowerCase();
-  if (!contentType.includes('text/event-stream')) {
-    return createNonStreamingChatResponse({
-      upstream,
-      fallbackModel,
-      loader,
-      version,
-      latestUserMessage,
-    });
-  }
-
-  const encoder = new TextEncoder();
-  const { readable, writable } = new TransformStream();
-  const writer = writable.getWriter();
-
-  let usedModel = fallbackModel;
-  let fullResponse = '';
-
-  void streamUpstreamChunks({
-    upstream,
-    writer,
-    encoder,
-    onDelta(delta, model) {
-      usedModel = model || usedModel;
-      fullResponse += delta;
-    },
-    async onDone() {
-      await rememberChatInteraction({
-        loader,
-        version,
-        prompt: latestUserMessage,
-        response: fullResponse,
-        model: usedModel,
-      });
-    },
-  });
-
-  return new Response(readable, {
-    status: 200,
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-store',
-      'X-Accel-Buffering': 'no',
-      Connection: 'keep-alive',
-    },
-  });
-}
-
-async function createNonStreamingChatResponse({
-  upstream,
-  fallbackModel,
-  loader,
-  version,
-  latestUserMessage,
-}) {
-  let payload = {};
-  try {
-    payload = await upstream.json();
-  } catch {
-    payload = {};
-  }
-
-  const model = payload?.model || fallbackModel;
-  const fullResponse = extractNonStreamingText(payload);
   await rememberChatInteraction({
     loader,
     version,
     prompt: latestUserMessage,
-    response: fullResponse,
+    response: text,
     model,
   });
 
-  const body = `data: ${JSON.stringify({ delta: fullResponse, model })}\n\n`
-    + `data: ${JSON.stringify({ done: true, model })}\n\n`;
-
-  return new Response(body, {
+  const streamBody = buildNormalizedSseBody(text, model);
+  return new Response(streamBody, {
     status: 200,
     headers: {
       'Content-Type': 'text/event-stream',
@@ -158,8 +106,8 @@ async function createNonStreamingChatResponse({
   });
 }
 
-export async function readUpstreamError(upstream) {
-  const text = await upstream.text();
+export async function readErrorMessage(response) {
+  const text = await response.text();
   let json = {};
   try {
     json = JSON.parse(text);
@@ -171,19 +119,106 @@ export async function readUpstreamError(upstream) {
     || json?.message
     || json?.error
     || text
-    || `HTTP ${upstream.status}`;
+    || `HTTP ${response.status}`;
+}
+
+function buildNormalizedSseBody(text, model) {
+  const chunks = splitIntoChunks(text || '', NORMALIZED_CHUNK_SIZE);
+  const lines = [];
+
+  if (!chunks.length) {
+    lines.push(`data: ${JSON.stringify({ delta: '', model })}\n\n`);
+  } else {
+    for (const chunk of chunks) {
+      lines.push(`data: ${JSON.stringify({ delta: chunk, model })}\n\n`);
+    }
+  }
+
+  lines.push(`data: ${JSON.stringify({ done: true, model })}\n\n`);
+  return lines.join('');
+}
+
+function splitIntoChunks(text, maxLength) {
+  const value = String(text || '');
+  if (!value) return [];
+  const chunks = [];
+  for (let index = 0; index < value.length; index += maxLength) {
+    chunks.push(value.slice(index, index + maxLength));
+  }
+  return chunks;
+}
+
+function extractCompletionText(payload) {
+  const choice = payload?.choices?.[0] || {};
+  return (
+    textFromValue(choice?.message?.content)
+    || textFromValue(choice?.text)
+    || textFromValue(payload?.output_text)
+    || textFromValue(payload?.response)
+    || ''
+  ).trim();
+}
+
+function textFromValue(value) {
+  if (!value) return '';
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) {
+    return value.map(item => textFromValue(item)).join('');
+  }
+  if (typeof value === 'object') {
+    return (
+      textFromValue(value.text)
+      || textFromValue(value.content)
+      || textFromValue(value.output_text)
+      || textFromValue(value.reasoning)
+      || ''
+    );
+  }
+  return '';
+}
+
+function isRetryableStatus(status) {
+  return status === 429 || status === 502 || status === 503 || status === 504;
+}
+
+function resolveRetryDelayMs(response, attempt) {
+  const retryAfter = parseRetryAfterMs(response.headers.get('retry-after'));
+  if (retryAfter !== null) {
+    return retryAfter;
+  }
+  return Math.min(30000, 4000 * (attempt + 1));
+}
+
+function parseRetryAfterMs(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  const seconds = Number(raw);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.max(1000, Math.round(seconds * 1000));
+  }
+  const dateMs = Date.parse(raw);
+  if (Number.isFinite(dateMs)) {
+    return Math.max(1000, dateMs - Date.now());
+  }
+  return null;
+}
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function getLatestUserMessage(messages) {
-  return [...messages].reverse().find(message => message?.role === 'user')?.content || '';
+  return [...(Array.isArray(messages) ? messages : [])]
+    .reverse()
+    .find(message => message?.role === 'user')?.content || '';
 }
 
 async function createResearchMessage(loader, version) {
   const lines = [];
-  const mapping = getMappingMode(loader, version);
+  const mappingMode = getMappingMode(loader, version);
   const researchedBuild = await loadBuildResearch(loader, version);
 
-  if (loader === 'fabric' && mapping === 'yarn') {
+  if (loader === 'fabric' && mappingMode === 'yarn') {
     lines.push(`Fabric ${version} uses Yarn mappings. Use net.minecraft.block.*, net.minecraft.item.*, net.minecraft.registry.*, net.minecraft.util.Identifier.`);
     lines.push('For modern Fabric/Yarn targets, use Identifier.of(namespace, path) or Identifier.of(fullId).');
     lines.push('Prefer Item.Settings and AbstractBlock.Settings.copy(...).');
@@ -192,7 +227,7 @@ async function createResearchMessage(loader, version) {
     }
   }
 
-  if (loader === 'fabric' && mapping === 'none') {
+  if (loader === 'fabric' && mappingMode === 'none') {
     lines.push(`Fabric ${version} is non-obfuscated. Use official names, not Yarn-era imports.`);
     lines.push('Do not assume net.minecraft.block.*, net.minecraft.registry.*, or net.minecraft.util.Identifier exist unless verified for this exact target.');
   }
@@ -214,7 +249,7 @@ async function createResearchMessage(loader, version) {
   }
 
   lines.push('Never invent package names, imports, APIs, or version numbers.');
-  return { role: 'system', content: lines.filter(Boolean).join('\n') };
+  return { role: 'system', content: lines.join('\n') };
 }
 
 async function createMemoryMessage(loader, version, latestUserMessage) {
@@ -268,105 +303,6 @@ function formatResearchedVersions(loader, build) {
   }
   if (loader === 'neoforge') {
     return `Use researched versions where relevant: NeoForge ${build.neoforgeVersion}, userdev plugin ${build.userdevVersion}, Gradle ${build.gradleVersion}.`;
-  }
-  return '';
-}
-
-async function streamUpstreamChunks({ upstream, writer, encoder, onDelta, onDone }) {
-  const reader = upstream.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let usedModel = '';
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || !trimmed.startsWith('data:')) continue;
-
-        const dataStr = trimmed.slice(5).trim();
-        if (dataStr === '[DONE]') continue;
-
-        let chunk;
-        try {
-          chunk = JSON.parse(dataStr);
-        } catch {
-          continue;
-        }
-
-        if (chunk.model) {
-          usedModel = chunk.model;
-        }
-
-        const delta = extractStreamText(chunk);
-        if (delta) {
-          onDelta(delta, usedModel);
-          await writer.write(encoder.encode(`data: ${JSON.stringify({ delta, model: usedModel })}\n\n`));
-        }
-      }
-    }
-
-    await writer.write(encoder.encode(`data: ${JSON.stringify({ done: true, model: usedModel })}\n\n`));
-    await onDone();
-  } catch (error) {
-    await writer.write(encoder.encode(`data: ${JSON.stringify({ error: error.message })}\n\n`));
-  } finally {
-    writer.close().catch(() => {});
-  }
-}
-
-function extractStreamText(chunk) {
-  const choice = chunk?.choices?.[0] || {};
-  const delta = choice?.delta || {};
-
-  return (
-    textFromValue(delta.content)
-    || textFromValue(delta.reasoning)
-    || textFromValue(delta.text)
-    || textFromValue(choice?.message?.content)
-    || textFromValue(choice?.text)
-    || ''
-  );
-}
-
-function extractNonStreamingText(payload) {
-  const choice = payload?.choices?.[0] || {};
-  return (
-    textFromValue(choice?.message?.content)
-    || textFromValue(choice?.text)
-    || textFromValue(payload?.output_text)
-    || ''
-  );
-}
-
-function shouldUseStreaming(model) {
-  const value = String(model || '').toLowerCase();
-  if (!value) return true;
-  if (value.includes(':free')) return false;
-  return true;
-}
-
-function textFromValue(value) {
-  if (!value) return '';
-  if (typeof value === 'string') return value;
-  if (Array.isArray(value)) {
-    return value.map(item => textFromValue(item)).join('');
-  }
-  if (typeof value === 'object') {
-    return (
-      textFromValue(value.text)
-      || textFromValue(value.content)
-      || textFromValue(value.reasoning)
-      || textFromValue(value.output_text)
-      || ''
-    );
   }
   return '';
 }

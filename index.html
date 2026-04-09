@@ -1571,8 +1571,9 @@ async function sendMessage() {
   setTypingVisible(true);
   addChatActivity(`Captured your ${loader} ${version} request.`);
   addChatActivity('Researching official version metadata for this target.');
-  await ensureBuildResearch(loader, version);
-  addChatActivity('Prepared researched build metadata and target context.');
+  const researchPromise = ensureBuildResearch(loader, version)
+    .then(() => addChatActivity('Prepared researched build metadata and target context.'))
+    .catch(() => addChatActivity('Build metadata research fell back to cached/local defaults.'));
   addChatActivity('Sending the request to the AI model.');
   scrollToBottom();
 
@@ -1637,7 +1638,10 @@ async function sendMessage() {
       }
     }
 
-    if (!contentEl) contentEl = appendMessage('ai', fullText || '(no response)');
+    await researchPromise.catch(() => {});
+    if (!contentEl) {
+      contentEl = appendMessage('ai', fullText || 'The model returned an empty response.');
+    }
     addChatActivity('Response complete. Saving the conversation.');
     setTypingVisible(false);
 

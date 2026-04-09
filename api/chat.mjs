@@ -1,6 +1,6 @@
 export const config = { runtime: 'nodejs' };
 
-import { buildChatMessages, createChatStreamResponse, readUpstreamError, requestStreamingChatCompletion } from './_lib/chat-service.mjs';
+import { buildChatRequest, completeChat, createNormalizedChatResponse } from './_lib/chat-service.mjs';
 import { jsonResponse, methodNotAllowed, parseJsonRequest } from './_lib/http-utils.mjs';
 
 export default async function handler(request) {
@@ -23,31 +23,28 @@ export default async function handler(request) {
     return jsonResponse({ message: 'A non-empty messages array is required.' }, { status: 400 });
   }
 
-  const { latestUserMessage, messages } = await buildChatMessages({
-    messages: body.messages,
-    loader: body.loader,
-    version: body.version,
-  });
+  try {
+    const requestData = await buildChatRequest({ body });
+    const completion = await completeChat({
+      apiKey,
+      model: requestData.model,
+      maxTokens: requestData.maxTokens,
+      temperature: requestData.temperature,
+      messages: requestData.messages,
+    });
 
-  const { model, upstream } = await requestStreamingChatCompletion({
-    apiKey,
-    body,
-    messages,
-  });
-
-  if (!upstream.ok) {
-    const errorMessage = await readUpstreamError(upstream);
+    return createNormalizedChatResponse({
+      model: completion.model,
+      text: completion.text,
+      loader: body.loader,
+      version: body.version,
+      latestUserMessage: requestData.latestUserMessage,
+    });
+  } catch (error) {
+    const status = Number(error?.status) || 500;
     return jsonResponse(
-      { message: `AI error (${upstream.status}): ${String(errorMessage).slice(0, 400)}` },
-      { status: upstream.status },
+      { message: `AI error (${status}): ${String(error?.message || 'Unknown error').slice(0, 400)}` },
+      { status },
     );
   }
-
-  return createChatStreamResponse({
-    upstream,
-    fallbackModel: model,
-    loader: body.loader,
-    version: body.version,
-    latestUserMessage,
-  });
 }
