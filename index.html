@@ -817,6 +817,7 @@ Follow the selected target's mappings mode and loader conventions exactly.
 For Fabric targets where CodexMC scaffolds Yarn mappings, use Yarn-style Minecraft imports there.
 For modern Fabric/Yarn targets such as 1.21.x, do not use new Identifier(...); use Identifier.of(namespace, path) or Identifier.of(fullId) instead.
 For modern Yarn-based Fabric targets, prefer \`Item.Settings\` and \`AbstractBlock.Settings.copy(...)\` over outdated helper classes like \`FabricItemSettings\` or \`FabricBlockSettings\`.
+For modern Fabric blocks and block items, set \`registryKey(...)\` on \`AbstractBlock.Settings\` and \`Item.Settings\` before constructing the instances.
 For Fabric 26.1 or newer, treat the environment as non-obfuscated and avoid old Yarn-era tutorial imports unless you are certain they still exist.
 If a requested advanced API surface such as biome, worldgen, or feature code is uncertain for the selected target, prefer a smaller safe scaffold instead of inventing imports.
 When relevant, mention the Minecraft version your code targets.

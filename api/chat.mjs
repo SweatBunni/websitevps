@@ -9,11 +9,13 @@ function errJson(msg, status = 500) {
 }
 
 function isFabricNonObfuscated(v) { return /^26\./.test(String(v || '')); }
+function isModernFabricYarn(v) { return /^1\\.21(?:\\.\\d+)?$/.test(String(v || '')); }
+function usesModernFabricRegistryKeys(v) { return /^1\\.21\\.(?:2|3|4|10|11)$/.test(String(v || '')) || isFabricNonObfuscated(v); }
 
 function mappingMode(loader, version) {
   if (loader === 'fabric') {
     if (isFabricNonObfuscated(version)) return 'none';
-    if (['1.21','1.21.1','1.21.4','1.21.11'].includes(String(version||''))) return 'yarn';
+    if (isModernFabricYarn(version)) return 'yarn';
     return 'official';
   }
   return 'official';
@@ -26,6 +28,9 @@ function researchMsg(loader, version) {
     lines.push(`Fabric ${version} uses Yarn mappings. Use net.minecraft.block.*, net.minecraft.item.*, net.minecraft.registry.*, net.minecraft.util.Identifier.`);
     lines.push('For modern Fabric/Yarn targets, Identifier constructors are not public. Use Identifier.of(namespace, path) or Identifier.of(fullId).');
     lines.push('Prefer Item.Settings and AbstractBlock.Settings.copy(...) - avoid FabricItemSettings/FabricBlockSettings unless certain.');
+    if (usesModernFabricRegistryKeys(version)) {
+      lines.push('For modern Fabric blocks and block items, set registryKey(...) on AbstractBlock.Settings and Item.Settings before constructing the instances.');
+    }
   }
   if (loader === 'fabric' && mode === 'none') {
     lines.push(`Fabric ${version} (26.1+) is non-obfuscated. Use official deobfuscated names, not Yarn-era tutorial imports.`);
@@ -33,6 +38,9 @@ function researchMsg(loader, version) {
   }
   if ((loader === 'forge' || loader === 'neoforge') && /^1\.21|^26\./.test(String(version||''))) {
     lines.push(`${loader} ${version}: use official Mojang mapping names only. Do not mix Fabric/Yarn imports.`);
+  }
+  if (loader === 'paper') {
+    lines.push(`Paper ${version}: use the current Paper repository https://repo.papermc.io/repository/maven-public/ and avoid the old papermc.io repository URL.`);
   }
   if (!lines.length) return null;
   lines.push('Never invent package names, imports, or APIs for the selected target version.');

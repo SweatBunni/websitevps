@@ -598,11 +598,57 @@ function applyFileUpdates(files, updates, loader, version) {
   return changedFiles;
 }
 
+function upgradeGradleWrapperIfNeeded(content) {
+  // Gradle 8.1.1 and earlier do not support Java 21 (class file major version 65).
+  // Upgrade any Gradle < 8.3 to 8.8.1, which supports Java 21 and Java 23+.
+  const MIN_JAVA21_GRADLE = [8, 3];
+  const SAFE_GRADLE = '8.8.1';
+
+  return String(content || '').replace(
+    /(distributionUrl\s*=\s*https\\:\/\/services\.gradle\.org\/distributions\/gradle-)(\d+\.\d+(?:\.\d+)?)(-.+)/,
+    (match, prefix, ver, suffix) => {
+      const parts = ver.split('.').map(Number);
+      const major = parts[0] || 0;
+      const minor = parts[1] || 0;
+      const tooOld =
+        major < MIN_JAVA21_GRADLE[0] ||
+        (major === MIN_JAVA21_GRADLE[0] && minor < MIN_JAVA21_GRADLE[1]);
+      if (tooOld) {
+        return `${prefix}${SAFE_GRADLE}${suffix}`;
+      }
+      return match;
+    }
+  );
+}
+
 function normalizeGeneratedFiles(files, loader, version) {
   const changedFiles = [];
+
+  // Upgrade Gradle wrapper if it's too old to support the host JVM.
+  // Gradle < 8.3 cannot run on Java 21 (class file major version 65).
+  const wrapperPropsKey = Object.keys(files).find(
+    k => k.replace(/\\/g, '/') === 'gradle/wrapper/gradle-wrapper.properties'
+  );
+  if (wrapperPropsKey) {
+    const normalized = normalizeFileData(files[wrapperPropsKey]);
+    const upgraded = upgradeGradleWrapperIfNeeded(normalized.content);
+    if (upgraded !== normalized.content) {
+      files[wrapperPropsKey] = { encoding: 'utf8', content: upgraded };
+      changedFiles.push(wrapperPropsKey);
+    }
+  }
+
   if (loader === 'fabric' && files['build.gradle']) {
     const normalized = normalizeFileData(files['build.gradle']);
     const cleaned = normalizeFabricBuildGradle(stripUnsupportedFabricLoomSettings(normalized.content, version), version);
+    if (cleaned !== normalized.content) {
+      files['build.gradle'] = { encoding: 'utf8', content: cleaned };
+      changedFiles.push('build.gradle');
+    }
+  }
+  if ((loader === 'paper' || loader === 'spigot') && files['build.gradle']) {
+    const normalized = normalizeFileData(files['build.gradle']);
+    const cleaned = normalizePluginBuildGradle(normalized.content, loader, version);
     if (cleaned !== normalized.content) {
       files['build.gradle'] = { encoding: 'utf8', content: cleaned };
       changedFiles.push('build.gradle');
@@ -625,11 +671,11 @@ function normalizeGeneratedFiles(files, loader, version) {
 
 function buildRepairGuidance(loader, version) {
   if (loader === 'fabric') {
-    if (version === '1.21' || version === '1.21.1' || version === '1.21.4' || version === '1.21.11') {
-      return 'For this Fabric target, assume the project uses Yarn mappings. Prefer Yarn-style Minecraft imports, use Identifier.of(namespace, path) instead of new Identifier(...), and prefer Item.Settings and AbstractBlock.Settings.copy(...) over outdated FabricItemSettings or FabricBlockSettings helpers.';
+    if (isModernFabricYarnVersion(version)) {
+      return `For this Fabric target, assume the project uses Yarn mappings. Prefer Yarn-style Minecraft imports, use Identifier.of(namespace, path) instead of new Identifier(...), and prefer Item.Settings and AbstractBlock.Settings.copy(...) over outdated FabricItemSettings or FabricBlockSettings helpers.${usesModernFabricRegistryKeys(version) ? ' For modern Fabric block and block-item registration, set registryKey(...) on AbstractBlock.Settings and Item.Settings before constructing the instances.' : ''}`;
     }
     if (isFabricNonObfuscatedVersion(version)) {
-      return 'For Fabric 26.x targets, assume the environment is non-obfuscated. Do not add mappings dependencies, and do not use old Yarn-era remap assumptions.';
+      return 'For Fabric 26.x targets, assume the environment is non-obfuscated. Do not add mappings dependencies, and do not use old Yarn-era remap assumptions. For blocks and block items, set registryKey(...) on AbstractBlock.Settings and Item.Settings before constructing the instances.';
     }
     return 'For this Fabric target, respect the generated mappings mode exactly and do not mix Yarn names into an official-mappings build or vice versa.';
   }
@@ -638,6 +684,12 @@ function buildRepairGuidance(loader, version) {
   }
   if (loader === 'neoforge') {
     return 'For NeoForge targets, use official Mojang names and NeoForge-compatible APIs. Do not mix in Fabric or Forge-only imports unless they are truly shared.';
+  }
+  if (loader === 'paper') {
+    return 'For Paper targets, use the current Paper API repository at https://repo.papermc.io/repository/maven-public/ and do not use the old papermc.io repository URL.';
+  }
+  if (loader === 'spigot') {
+    return 'For Spigot targets, avoid Paper-only dependencies unless explicitly requested. If using Paper API, use the current repository at https://repo.papermc.io/repository/maven-public/.';
   }
   return 'Respect the generated mappings mode and loader-specific API style for the exact target version.';
 }
@@ -685,15 +737,149 @@ function normalizeFabricJavaSource(content, version) {
   if (usesModernFabricIdentifierFactory(version)) {
     next = next.replace(/\bnew\s+Identifier\s*\(/g, 'Identifier.of(');
   }
+  if (usesModernFabricRegistryKeys(version)) {
+    next = normalizeModernFabricRegistryKeys(next);
+  }
+  return next;
+}
+
+function normalizePluginBuildGradle(content, loader, version) {
+  let next = String(content || '');
+  next = next.replace(/https:\/\/papermc\.io\/repo\/repository\/maven-public\/?/g, 'https://repo.papermc.io/repository/maven-public/');
+
+  if (/io\.papermc\.paper:paper-api:/i.test(next) && !/repo\.papermc\.io\/repository\/maven-public/i.test(next)) {
+    if (/repositories\s*\{/i.test(next)) {
+      next = next.replace(/repositories\s*\{\s*/i, match => `${match}\n    maven { url = 'https://repo.papermc.io/repository/maven-public/' }\n`);
+    } else {
+      next += `\n\nrepositories {\n    mavenCentral()\n    maven { url = 'https://repo.papermc.io/repository/maven-public/' }\n}\n`;
+    }
+  }
+
+  if (loader === 'paper' && /paper-api:/i.test(next)) {
+    next = next.replace(/1\.21\.1-R0\.1-SNAPSHOT/g, `${version}-R0.1-SNAPSHOT`);
+  }
+
   return next;
 }
 
 function usesModernFabricIdentifierFactory(version) {
-  return version === '1.21' || version === '1.21.1' || version === '1.21.4' || version === '1.21.11' || isFabricNonObfuscatedVersion(version);
+  return isModernFabricYarnVersion(version) || isFabricNonObfuscatedVersion(version);
+}
+
+function usesModernFabricRegistryKeys(version) {
+  return /^1\.21\.(?:2|3|4|10|11)$/.test(String(version || '')) || isFabricNonObfuscatedVersion(version);
 }
 
 function isFabricNonObfuscatedVersion(version) {
   return /^26\./.test(String(version || ''));
+}
+
+function isModernFabricYarnVersion(version) {
+  return /^1\.21(?:\.\d+)?$/.test(String(version || ''));
+}
+
+function normalizeModernFabricRegistryKeys(content) {
+  let next = String(content || '');
+  const blockRegistrations = collectFabricBlockRegistrations(next);
+  if (!blockRegistrations.length) return next;
+
+  next = ensureImport(next, 'net.minecraft.registry.RegistryKey');
+  next = ensureImport(next, 'net.minecraft.registry.RegistryKeys');
+
+  for (const registration of blockRegistrations) {
+    const fieldPattern = new RegExp(
+      `(^[ \\t]*)((?:public|private|protected)\\s+static\\s+final\\s+Block\\s+${escapeRegExp(registration.blockVar)}\\s*=\\s*new\\s+Block\\s*\\()([\\s\\S]*?)(\\)\\s*;)`,
+      'm',
+    );
+
+    next = next.replace(fieldPattern, (match, indent, prefix, settingsExpr, suffix) => {
+      const settingsText = String(settingsExpr || '');
+      if (/\.registryKey\s*\(/.test(settingsText)) {
+        return match;
+      }
+
+      const declarations = buildModernFabricRegistryDeclarations(next, registration, indent);
+      return `${declarations}${indent}${prefix}${settingsText}.registryKey(${registration.blockKeyConst})${suffix}`;
+    });
+
+    const blockItemPattern = new RegExp(
+      `(new\\s+BlockItem\\s*\\(\\s*${escapeRegExp(registration.blockVar)}\\s*,\\s*new\\s+Item\\.Settings\\s*\\(\\))`,
+      'g',
+    );
+
+    next = next.replace(blockItemPattern, (match, constructorStart, offset) => {
+      const lookahead = next.slice(offset, offset + 240);
+      if (/\.registryKey\s*\(/.test(lookahead)) {
+        return match;
+      }
+      return `${constructorStart}.useBlockPrefixedTranslationKey().registryKey(${registration.itemKeyConst})`;
+    });
+  }
+
+  return next;
+}
+
+function collectFabricBlockRegistrations(content) {
+  const registrations = [];
+  const seen = new Set();
+  const pattern = /Registry\.register\(\s*Registries\.BLOCK\s*,\s*([\s\S]*?)\s*,\s*([A-Z0-9_]+)\s*\);/g;
+  let match;
+
+  while ((match = pattern.exec(content)) !== null) {
+    const idExpr = String(match[1] || '').trim();
+    const blockVar = String(match[2] || '').trim();
+    if (!idExpr || !blockVar || seen.has(blockVar)) continue;
+
+    const baseConst = blockVar.endsWith('_BLOCK')
+      ? blockVar.slice(0, -'_BLOCK'.length)
+      : blockVar;
+
+    registrations.push({
+      blockVar,
+      idExpr,
+      idConst: `${baseConst}_ID`,
+      blockKeyConst: `${baseConst}_BLOCK_KEY`,
+      itemKeyConst: `${baseConst}_ITEM_KEY`,
+    });
+    seen.add(blockVar);
+  }
+
+  return registrations;
+}
+
+function buildModernFabricRegistryDeclarations(content, registration, indent = '') {
+  const declarations = [];
+  if (!hasDeclaration(content, registration.idConst)) {
+    declarations.push(`${indent}private static final Identifier ${registration.idConst} = ${registration.idExpr};`);
+  }
+  if (!hasDeclaration(content, registration.blockKeyConst)) {
+    declarations.push(`${indent}private static final RegistryKey<Block> ${registration.blockKeyConst} = RegistryKey.of(RegistryKeys.BLOCK, ${registration.idConst});`);
+  }
+  if (!hasDeclaration(content, registration.itemKeyConst)) {
+    declarations.push(`${indent}private static final RegistryKey<Item> ${registration.itemKeyConst} = RegistryKey.of(RegistryKeys.ITEM, ${registration.idConst});`);
+  }
+  return declarations.length ? `${declarations.join('\n')}\n` : '';
+}
+
+function hasDeclaration(content, identifierName) {
+  return new RegExp(`\\b${escapeRegExp(identifierName)}\\b`).test(content);
+}
+
+function ensureImport(content, importPath) {
+  const importLine = `import ${importPath};`;
+  if (content.includes(importLine)) return content;
+
+  const packageMatch = content.match(/^(package\s+[\w.]+\s*;\s*\r?\n)/m);
+  if (packageMatch) {
+    const insertionPoint = packageMatch.index + packageMatch[0].length;
+    return `${content.slice(0, insertionPoint)}${importLine}\n${content.slice(insertionPoint)}`;
+  }
+
+  return `${importLine}\n${content}`;
+}
+
+function escapeRegExp(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 export function sanitizeFiles(files) {
@@ -793,7 +979,7 @@ async function detectSystemJava(requiredVersion) {
 
     const versionText = `${result.stdout}\n${result.stderr}`.trim();
     const major = parseJavaMajorVersion(versionText);
-    if (major === requiredVersion) {
+    if (major !== null && major >= requiredVersion) {
       const resolvedHome = candidate === 'java'
         ? (javaHome || '')
         : path.dirname(path.dirname(candidate));
