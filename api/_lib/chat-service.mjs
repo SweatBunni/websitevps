@@ -255,7 +255,7 @@ async function streamUpstreamChunks({ upstream, writer, encoder, onDelta, onDone
           usedModel = chunk.model;
         }
 
-        const delta = chunk.choices?.[0]?.delta?.content;
+        const delta = extractStreamText(chunk);
         if (delta) {
           onDelta(delta, usedModel);
           await writer.write(encoder.encode(`data: ${JSON.stringify({ delta, model: usedModel })}\n\n`));
@@ -270,6 +270,38 @@ async function streamUpstreamChunks({ upstream, writer, encoder, onDelta, onDone
   } finally {
     writer.close().catch(() => {});
   }
+}
+
+function extractStreamText(chunk) {
+  const choice = chunk?.choices?.[0] || {};
+  const delta = choice?.delta || {};
+
+  return (
+    textFromValue(delta.content)
+    || textFromValue(delta.reasoning)
+    || textFromValue(delta.text)
+    || textFromValue(choice?.message?.content)
+    || textFromValue(choice?.text)
+    || ''
+  );
+}
+
+function textFromValue(value) {
+  if (!value) return '';
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) {
+    return value.map(item => textFromValue(item)).join('');
+  }
+  if (typeof value === 'object') {
+    return (
+      textFromValue(value.text)
+      || textFromValue(value.content)
+      || textFromValue(value.reasoning)
+      || textFromValue(value.output_text)
+      || ''
+    );
+  }
+  return '';
 }
 
 function isFabricNonObfuscated(version) {
