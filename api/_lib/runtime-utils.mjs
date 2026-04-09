@@ -1,12 +1,16 @@
 import { waitUntil } from '@vercel/functions';
 
 export function scheduleBackgroundTask(taskPromise) {
-  if (process.env.VERCEL) {
-    waitUntil(taskPromise);
-    return;
-  }
-
-  taskPromise.catch(error => {
+  const safeTask = Promise.resolve(taskPromise).catch(error => {
     console.error('[codexmc] background task failed:', error);
   });
+
+  if (process.env.VERCEL) {
+    waitUntil(safeTask);
+    return;
+  }
+}
+
+export function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }

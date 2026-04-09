@@ -1,40 +1,49 @@
-export function jsonResponse(body, init = {}) {
-  return Response.json(body, {
-    status: init.status || 200,
-    headers: {
-      'Cache-Control': 'no-store',
-      ...(init.headers || {}),
-    },
-  });
+const NO_STORE_HEADER = { 'Cache-Control': 'no-store' };
+
+export function jsonResponse(payload, init = {}) {
+  return Response.json(payload, buildInit(init));
 }
 
 export function textResponse(text, init = {}) {
-  return new Response(String(text || ''), {
-    status: init.status || 200,
+  return new Response(String(text ?? ''), buildInit({
+    ...init,
     headers: {
       'Content-Type': 'text/plain; charset=utf-8',
-      'Cache-Control': 'no-store',
       ...(init.headers || {}),
     },
-  });
+  }));
 }
 
-export function methodNotAllowed() {
-  return jsonResponse({ message: 'Method not allowed.' }, { status: 405 });
+export function errorResponse(message, status = 500, extra = {}) {
+  return jsonResponse({ message, ...extra }, { status });
+}
+
+export function methodNotAllowed(message = 'Method not allowed.') {
+  return errorResponse(message, 405);
 }
 
 export async function parseJsonRequest(request) {
   try {
     return { ok: true, value: await request.json() };
   } catch {
-    return { ok: false, response: jsonResponse({ message: 'Invalid JSON body.' }, { status: 400 }) };
+    return { ok: false, response: errorResponse('Invalid JSON body.', 400) };
   }
 }
 
-export function getUrl(request) {
+export function getRequestUrl(request) {
   return new URL(request.url);
 }
 
-export function getSearchParam(request, key) {
-  return getUrl(request).searchParams.get(key) || '';
+export function getSearchParam(request, key, fallback = '') {
+  return getRequestUrl(request).searchParams.get(key) || fallback;
+}
+
+function buildInit(init) {
+  return {
+    status: init.status || 200,
+    headers: {
+      ...NO_STORE_HEADER,
+      ...(init.headers || {}),
+    },
+  };
 }

@@ -6,33 +6,27 @@ export function sanitizeFiles(files) {
   }
 
   const sanitized = {};
-  for (const [relativePath, file] of Object.entries(files)) {
-    const safePath = sanitizeRelativePath(relativePath);
-    sanitized[safePath] = normalizeFileData(file);
+  for (const [filePath, fileValue] of Object.entries(files)) {
+    sanitized[normalizeRelativePath(filePath)] = normalizeFileValue(fileValue);
   }
   return sanitized;
 }
 
-function normalizeFileData(file) {
-  if (typeof file === 'string') {
-    return { encoding: 'utf8', content: file };
+export function normalizeFileValue(fileValue) {
+  if (typeof fileValue === 'string') {
+    return { encoding: 'utf8', content: fileValue };
   }
 
   return {
-    encoding: file && file.encoding === 'base64' ? 'base64' : 'utf8',
-    content: file && typeof file.content === 'string' ? file.content : '',
+    encoding: fileValue?.encoding === 'base64' ? 'base64' : 'utf8',
+    content: typeof fileValue?.content === 'string' ? fileValue.content : '',
   };
 }
 
-function sanitizeRelativePath(relativePath) {
-  if (typeof relativePath !== 'string' || !relativePath.trim()) {
-    throw new Error('Each file must have a non-empty relative path.');
-  }
-
-  const normalized = relativePath.replace(/\\/g, '/').replace(/^\/+/, '');
+function normalizeRelativePath(filePath) {
+  const normalized = String(filePath || '').trim().replace(/\\/g, '/').replace(/^\/+/, '');
   if (!normalized || normalized.includes('..') || path.isAbsolute(normalized)) {
-    throw new Error(`Unsafe file path: ${relativePath}`);
+    throw new Error(`Unsafe file path: ${filePath}`);
   }
-
   return normalized;
 }

@@ -1,14 +1,15 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-const MEMORY_ROOT = path.resolve(process.env.MEMORY_STORE_DIR || path.join(process.cwd(), '.data', 'site-memory'));
-const MEMORY_FILE = path.join(MEMORY_ROOT, 'entries.jsonl');
-const MAX_ENTRIES = Number(process.env.SITE_MEMORY_MAX_ENTRIES || 1500);
+const MEMORY_DIRECTORY = path.resolve(process.env.MEMORY_STORE_DIR || path.join(process.cwd(), '.data', 'site-memory'));
+const MEMORY_FILE_PATH = path.join(MEMORY_DIRECTORY, 'entries.jsonl');
+const MAX_MEMORY_ENTRIES = Number(process.env.SITE_MEMORY_MAX_ENTRIES || 1500);
 
 export async function rememberChatInteraction({ loader, version, prompt, response, model }) {
   const cleanPrompt = compactText(prompt, 2500);
   if (!cleanPrompt) return;
-  await appendEntry({
+
+  await appendMemoryEntry({
     type: 'chat',
     loader: loader || '',
     version: version || '',
@@ -21,7 +22,7 @@ export async function rememberChatInteraction({ loader, version, prompt, respons
 }
 
 export async function rememberBuildOutcome({ loader, version, modName, prompt, success, failureSignature, fixSummary, changedFiles, buildLog }) {
-  await appendEntry({
+  await appendMemoryEntry({
     type: 'build',
     loader: loader || '',
     version: version || '',
@@ -40,7 +41,8 @@ export async function rememberBuildOutcome({ loader, version, modName, prompt, s
 export async function rememberResearchBundle({ loader, version, query, summary, sources, errorText }) {
   const cleanQuery = compactText(query, 1400);
   if (!cleanQuery) return;
-  await appendEntry({
+
+  await appendMemoryEntry({
     type: 'research',
     loader: loader || '',
     version: version || '',
@@ -53,50 +55,55 @@ export async function rememberResearchBundle({ loader, version, query, summary, 
 }
 
 export async function retrieveRelevantMemories({ query, loader = '', version = '', type = '', limit = 4 }) {
-  const cleanQuery = compactText(query, 3000);
-  if (!cleanQuery) return [];
+  const searchQuery = compactText(query, 3000);
+  if (!searchQuery) return [];
 
-  const entries = await readEntries();
-  if (!entries.length) return [];
-
-  const scored = entries
+  const entries = await readMemoryEntries();
+  return entries
     .filter(entry => !type || entry.type === type)
-    .map(entry => ({ entry, score: scoreEntry(entry, cleanQuery, loader, version) }))
+    .map(entry => ({ entry, score: scoreMemoryEntry(entry, searchQuery, loader, version) }))
     .filter(item => item.score > 0)
-    .sort((a, b) => {
-      if (b.score !== a.score) return b.score - a.score;
-      return String(b.entry.createdAt || '').localeCompare(String(a.entry.createdAt || ''));
+    .sort((left, right) => {
+      if (right.score !== left.score) return right.score - left.score;
+      return String(right.entry.createdAt || '').localeCompare(String(left.entry.createdAt || ''));
     })
-    .slice(0, limit);
-
-  return scored.map(({ entry }) => formatMemory(entry));
+    .slice(0, limit)
+    .map(item => formatMemoryEntry(item.entry));
 }
 
-async function appendEntry(entry) {
+async function appendMemoryEntry(entry) {
   try {
-    await fs.mkdir(MEMORY_ROOT, { recursive: true });
-    await fs.appendFile(MEMORY_FILE, `${JSON.stringify(entry)}\n`, 'utf8');
-    await trimEntries();
+    await fs.mkdir(MEMORY_DIRECTORY, { recursive: true });
+    await fs.appendFile(MEMORY_FILE_PATH, `${JSON.stringify(entry)}\n`, 'utf8');
+    await trimMemoryFile();
   } catch {}
 }
 
-async function trimEntries() {
+async function trimMemoryFile() {
   try {
-    const entries = await readEntries();
-    if (entries.length <= MAX_ENTRIES) return;
-    const trimmed = entries.slice(entries.length - MAX_ENTRIES);
-    await fs.writeFile(MEMORY_FILE, trimmed.map(entry => JSON.stringify(entry)).join('\n') + '\n', 'utf8');
+    const entries = await readMemoryEntries();
+    if (entries.length <= MAX_MEMORY_ENTRIES) return;
+    const trimmed = entries.slice(entries.length - MAX_MEMORY_ENTRIES);
+    await fs.writeFile(
+      MEMORY_FILE_PATH,
+      trimmed.map(entry => JSON.stringify(entry)).join('\n') + '\n',
+      'utf8',
+    );
   } catch {}
 }
 
-async function readEntries() {
+async function readMemoryEntries() {
   try {
-    const text = await fs.readFile(MEMORY_FILE, 'utf8');
+    const text = await fs.readFile(MEMORY_FILE_PATH, 'utf8');
     return text
       .split(/\r?\n/)
       .filter(Boolean)
       .map(line => {
-        try { return JSON.parse(line); } catch { return null; }
+        try {
+          return JSON.parse(line);
+        } catch {
+          return null;
+        }
       })
       .filter(Boolean);
   } catch {
@@ -104,8 +111,8 @@ async function readEntries() {
   }
 }
 
-function scoreEntry(entry, query, loader, version) {
-  const entryTokens = tokenize([
+function scoreMemoryEntry(entry, query, loader, version) {
+  const entryTokens = tokenizeText([
     entry.prompt,
     entry.response,
     entry.failureSignature,
@@ -116,11 +123,11 @@ function scoreEntry(entry, query, loader, version) {
     entry.query,
     entry.errorText,
   ].filter(Boolean).join(' '));
+
   if (!entryTokens.size) return 0;
 
-  const queryTokens = tokenize(query);
   let score = 0;
-  for (const token of queryTokens) {
+  for (const token of tokenizeText(query)) {
     if (entryTokens.has(token)) score += 3;
   }
   if (loader && entry.loader === loader) score += 6;
@@ -130,7 +137,7 @@ function scoreEntry(entry, query, loader, version) {
   return score;
 }
 
-function formatMemory(entry) {
+function formatMemoryEntry(entry) {
   if (entry.type === 'build') {
     return {
       type: entry.type,
@@ -173,7 +180,7 @@ function formatMemory(entry) {
   };
 }
 
-function tokenize(text) {
+function tokenizeText(text) {
   return new Set(
     String(text || '')
       .toLowerCase()
@@ -185,7 +192,7 @@ function tokenize(text) {
 function compactText(text, maxChars) {
   const value = String(text || '').replace(/\s+/g, ' ').trim();
   if (!value) return '';
-  return value.length <= maxChars ? value : `${value.slice(0, maxChars - 1)}…`;
+  return value.length <= maxChars ? value : `${value.slice(0, maxChars - 1)}...`;
 }
 
 const STOP_WORDS = new Set([

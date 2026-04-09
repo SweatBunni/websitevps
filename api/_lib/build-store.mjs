@@ -1,56 +1,27 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { put, head, get, list } from '@vercel/blob';
+import { get, head, list, put } from '@vercel/blob';
 
 const STORE_PREFIX = 'mod-build-jobs';
-const BLOB_ACCESS = process.env.BLOB_STORE_ACCESS === 'private' ? 'private' : 'public';
-const HARDCODED_BLOB_TOKEN = 'vercel_blob_rw_tEgsM9dmjIFAglxs_MPuvPzWupIRoFSJlBsz73vpoujgOGr';
-const BLOB_TOKEN = process.env.BLOB_READ_WRITE_TOKEN || HARDCODED_BLOB_TOKEN;
 const STORE_MODE = resolveStoreMode();
+const BLOB_ACCESS = process.env.BLOB_STORE_ACCESS === 'private' ? 'private' : 'public';
+const BLOB_TOKEN = process.env.BLOB_READ_WRITE_TOKEN || '';
 const FILESYSTEM_ROOT = path.resolve(process.env.BUILD_STORE_DIR || path.join(process.cwd(), '.data', 'build-jobs'));
 
-export function blobPath(jobId, fileName) {
-  return `${STORE_PREFIX}/${jobId}/${fileName}`;
+export function hasBlobToken() {
+  return STORE_MODE === 'filesystem' || Boolean(BLOB_TOKEN);
 }
 
-function statusPrefix(jobId) {
-  return `${STORE_PREFIX}/${jobId}/status/`;
-}
-
-function latestStatusPath(jobId) {
-  return `${statusPrefix(jobId)}latest.json`;
+export function getBlobAccess() {
+  return STORE_MODE === 'filesystem' ? 'filesystem' : BLOB_ACCESS;
 }
 
 export async function putJson(jobId, fileName, value) {
-  if (STORE_MODE === 'filesystem') {
-    await writeFilesystemValue(jobId, fileName, JSON.stringify(value));
-    return;
-  }
-
-  await put(blobPath(jobId, fileName), JSON.stringify(value), {
-    access: BLOB_ACCESS,
-    addRandomSuffix: false,
-    allowOverwrite: true,
-    contentType: 'application/json; charset=utf-8',
-    cacheControlMaxAge: 0,
-    token: BLOB_TOKEN,
-  });
+  await writeValue(jobId, fileName, JSON.stringify(value), 'application/json; charset=utf-8');
 }
 
 export async function putText(jobId, fileName, value, contentType = 'text/plain; charset=utf-8') {
-  if (STORE_MODE === 'filesystem') {
-    await writeFilesystemValue(jobId, fileName, String(value || ''));
-    return;
-  }
-
-  await put(blobPath(jobId, fileName), String(value || ''), {
-    access: BLOB_ACCESS,
-    addRandomSuffix: false,
-    allowOverwrite: true,
-    contentType,
-    cacheControlMaxAge: 0,
-    token: BLOB_TOKEN,
-  });
+  await writeValue(jobId, fileName, String(value ?? ''), contentType);
 }
 
 export async function putBytes(jobId, fileName, value, contentType, cacheControlMaxAge = 0) {
@@ -70,11 +41,8 @@ export async function putBytes(jobId, fileName, value, contentType, cacheControl
 }
 
 export async function putStatus(jobId, value) {
-  const stamp = String(value?.updatedAt || new Date().toISOString())
-    .replace(/[^0-9A-Za-z]+/g, '-')
-    .replace(/^-+|-+$/g, '');
+  const stamp = formatStatusStamp(value?.updatedAt || new Date().toISOString());
   const suffix = Math.random().toString(36).slice(2, 8);
-  const pathname = `${statusPrefix(jobId)}${stamp}-${suffix}.json`;
   const body = JSON.stringify(value);
 
   if (STORE_MODE === 'filesystem') {
@@ -83,23 +51,8 @@ export async function putStatus(jobId, value) {
     return;
   }
 
-  await put(pathname, body, {
-    access: BLOB_ACCESS,
-    addRandomSuffix: false,
-    allowOverwrite: true,
-    contentType: 'application/json; charset=utf-8',
-    cacheControlMaxAge: 60,
-    token: BLOB_TOKEN,
-  });
-
-  await put(latestStatusPath(jobId), body, {
-    access: BLOB_ACCESS,
-    addRandomSuffix: false,
-    allowOverwrite: true,
-    contentType: 'application/json; charset=utf-8',
-    cacheControlMaxAge: 0,
-    token: BLOB_TOKEN,
-  });
+  await put(blobPath(jobId, `status/${stamp}-${suffix}.json`), body, buildBlobWriteOptions('application/json; charset=utf-8', 60));
+  await put(blobPath(jobId, 'status/latest.json'), body, buildBlobWriteOptions('application/json; charset=utf-8', 0));
 }
 
 export async function getText(jobId, fileName) {
@@ -112,17 +65,11 @@ export async function getText(jobId, fileName) {
   }
 
   try {
-    const result = await get(blobPath(jobId, fileName), {
-      access: BLOB_ACCESS,
-      token: BLOB_TOKEN,
-    });
-    if (!result) return null;
-    const response = await fetch(result.url, {
-      headers: authHeaders(),
-      cache: 'no-store',
-    });
+    const blob = await get(blobPath(jobId, fileName), { access: BLOB_ACCESS, token: BLOB_TOKEN });
+    if (!blob) return null;
+    const response = await fetch(blob.url, { headers: buildBlobReadHeaders(), cache: 'no-store' });
     if (!response.ok) return null;
-    return response.text();
+    return await response.text();
   } catch {
     return null;
   }
@@ -141,10 +88,10 @@ export async function getJson(jobId, fileName) {
 export async function getBytes(jobId, fileName) {
   if (STORE_MODE === 'filesystem') {
     try {
-      const filePath = filesystemPath(jobId, fileName);
+      const targetPath = filesystemPath(jobId, fileName);
       return {
-        buffer: await fs.readFile(filePath),
-        metadata: await fs.stat(filePath),
+        buffer: await fs.readFile(targetPath),
+        metadata: await fs.stat(targetPath),
         response: null,
       };
     } catch {
@@ -153,19 +100,13 @@ export async function getBytes(jobId, fileName) {
   }
 
   try {
-    const result = await get(blobPath(jobId, fileName), {
-      access: BLOB_ACCESS,
-      token: BLOB_TOKEN,
-    });
-    if (!result) return null;
-    const response = await fetch(result.url, {
-      headers: authHeaders(),
-      cache: 'no-store',
-    });
+    const blob = await get(blobPath(jobId, fileName), { access: BLOB_ACCESS, token: BLOB_TOKEN });
+    if (!blob) return null;
+    const response = await fetch(blob.url, { headers: buildBlobReadHeaders(), cache: 'no-store' });
     if (!response.ok) return null;
     return {
       buffer: Buffer.from(await response.arrayBuffer()),
-      metadata: result,
+      metadata: blob,
       response,
     };
   } catch {
@@ -190,52 +131,26 @@ export async function getBlobMetadata(jobId, fileName) {
 }
 
 export async function getLatestStatus(jobId) {
+  const latest = await getJson(jobId, 'status/latest.json');
+  if (latest) return latest;
+
+  if (STORE_MODE === 'filesystem') {
+    return readLatestFilesystemStatus(jobId);
+  }
+
   try {
-    const latestText = await getText(jobId, 'status/latest.json');
-    if (latestText) {
-      try {
-        return JSON.parse(latestText);
-      } catch {
-        // Fall through to timestamped-status discovery below.
-      }
-    }
-
-    if (STORE_MODE === 'filesystem') {
-      const dir = filesystemPath(jobId, 'status');
-      const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
-      const latest = entries
-        .filter(entry => entry.isFile() && entry.name.endsWith('.json') && entry.name !== 'latest.json')
-        .map(entry => entry.name)
-        .sort()
-        .pop();
-      if (!latest) return null;
-      const text = await fs.readFile(path.join(dir, latest), 'utf8').catch(() => '');
-      return text ? JSON.parse(text) : null;
-    }
-
     const result = await list({
-      prefix: statusPrefix(jobId),
+      prefix: blobPath(jobId, 'status/'),
       token: BLOB_TOKEN,
     });
-
     const blobs = Array.isArray(result?.blobs) ? result.blobs : [];
-    if (blobs.length === 0) {
-      return null;
-    }
+    const latestBlob = blobs
+      .filter(blob => blob.pathname.endsWith('.json') && !blob.pathname.endsWith('/latest.json'))
+      .sort(compareBlobStatus)
+      [0];
+    if (!latestBlob) return null;
 
-    const latest = blobs
-      .slice()
-      .sort((a, b) => {
-        const aTime = Date.parse(a.uploadedAt || a.pathname || '') || 0;
-        const bTime = Date.parse(b.uploadedAt || b.pathname || '') || 0;
-        if (aTime !== bTime) return bTime - aTime;
-        return String(b.pathname || '').localeCompare(String(a.pathname || ''));
-      })[0];
-
-    const response = await fetch(latest.url, {
-      headers: authHeaders(),
-      cache: 'no-store',
-    });
+    const response = await fetch(latestBlob.url, { headers: buildBlobReadHeaders(), cache: 'no-store' });
     if (!response.ok) return null;
     return await response.json();
   } catch {
@@ -243,18 +158,8 @@ export async function getLatestStatus(jobId) {
   }
 }
 
-export function getBlobAccess() {
-  return STORE_MODE === 'filesystem' ? 'filesystem' : BLOB_ACCESS;
-}
-
-export function hasBlobToken() {
-  return STORE_MODE === 'filesystem' || Boolean(BLOB_TOKEN);
-}
-
-function authHeaders() {
-  return BLOB_ACCESS === 'private' && BLOB_TOKEN
-    ? { Authorization: `Bearer ${BLOB_TOKEN}` }
-    : {};
+function blobPath(jobId, fileName) {
+  return `${STORE_PREFIX}/${jobId}/${fileName}`;
 }
 
 function resolveStoreMode() {
@@ -268,8 +173,66 @@ function filesystemPath(jobId, fileName) {
   return path.join(FILESYSTEM_ROOT, ...blobPath(jobId, fileName).split('/'));
 }
 
+async function writeValue(jobId, fileName, value, contentType) {
+  if (STORE_MODE === 'filesystem') {
+    await writeFilesystemValue(jobId, fileName, value);
+    return;
+  }
+
+  await put(blobPath(jobId, fileName), value, buildBlobWriteOptions(contentType, 0));
+}
+
 async function writeFilesystemValue(jobId, fileName, value) {
-  const target = filesystemPath(jobId, fileName);
-  await fs.mkdir(path.dirname(target), { recursive: true });
-  await fs.writeFile(target, value);
+  const targetPath = filesystemPath(jobId, fileName);
+  await fs.mkdir(path.dirname(targetPath), { recursive: true });
+  await fs.writeFile(targetPath, value);
+}
+
+function buildBlobWriteOptions(contentType, cacheControlMaxAge) {
+  return {
+    access: BLOB_ACCESS,
+    addRandomSuffix: false,
+    allowOverwrite: true,
+    contentType,
+    cacheControlMaxAge,
+    token: BLOB_TOKEN,
+  };
+}
+
+function buildBlobReadHeaders() {
+  return BLOB_ACCESS === 'private' && BLOB_TOKEN
+    ? { Authorization: `Bearer ${BLOB_TOKEN}` }
+    : {};
+}
+
+function formatStatusStamp(value) {
+  return String(value)
+    .replace(/[^0-9A-Za-z]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+async function readLatestFilesystemStatus(jobId) {
+  try {
+    const statusDirectory = filesystemPath(jobId, 'status');
+    const entries = await fs.readdir(statusDirectory, { withFileTypes: true });
+    const latestFileName = entries
+      .filter(entry => entry.isFile() && entry.name.endsWith('.json') && entry.name !== 'latest.json')
+      .map(entry => entry.name)
+      .sort()
+      .pop();
+
+    if (!latestFileName) return null;
+
+    const text = await fs.readFile(path.join(statusDirectory, latestFileName), 'utf8');
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function compareBlobStatus(left, right) {
+  const leftTime = Date.parse(left.uploadedAt || left.pathname || '') || 0;
+  const rightTime = Date.parse(right.uploadedAt || right.pathname || '') || 0;
+  if (leftTime !== rightTime) return rightTime - leftTime;
+  return String(right.pathname || '').localeCompare(String(left.pathname || ''));
 }

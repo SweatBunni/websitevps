@@ -1,12 +1,14 @@
 import { executeBuildJob } from './build-common.mjs';
 import { getJson, getLatestStatus, putBytes, putJson, putStatus, putText } from './build-store.mjs';
 import { getDeepBuildResearch } from './research-metadata.mjs';
+import { sleep } from './runtime-utils.mjs';
 
-const STATUS_RETRY_ATTEMPTS = 10;
-const STATUS_RETRY_DELAY_MS = 1000;
+const STATUS_READ_RETRIES = 10;
+const STATUS_READ_DELAY_MS = 1000;
+const MAX_ACTIVITY_ENTRIES = 40;
 
 export async function runStoredBuildJob(jobId) {
-  const input = await retry(() => getJson(jobId, 'input.json'));
+  const input = await retryRead(() => getJson(jobId, 'input.json'));
   if (!input) {
     throw new Error('Build job input was not found.');
   }
@@ -18,57 +20,55 @@ export async function runBuildJobInput(jobId, input) {
     throw new Error('Build job input was not provided.');
   }
 
-  const existing = await retry(() => getLatestStatus(jobId));
-  if (isFinalStatus(existing?.status)) {
-    return existing;
+  const currentStatus = await retryRead(() => getLatestStatus(jobId));
+  if (isFinalStatus(currentStatus?.status)) {
+    return currentStatus;
   }
 
   const startedAt = new Date().toISOString();
-  await writeStatus(jobId, existing, {
+  await writeJobStatus(jobId, {
+    ...(currentStatus || {}),
     jobId,
     status: 'running',
     loader: input.loader,
     version: input.version,
     modName: input.modName,
-    attempts: existing?.attempts || [],
+    attempts: currentStatus?.attempts || [],
+    activityLog: appendActivity([], 'Worker started and is preparing the build.'),
     createdAt: input.createdAt,
     startedAt,
     workerStartedAt: startedAt,
     updatedAt: startedAt,
-    activityLog: appendActivity([], 'Worker started and is preparing the build.'),
     provider: 'vercel',
   });
 
   try {
-    const researchBundle = await runResearchPhase(jobId, input, startedAt, existing);
-    const result = await runBuildPhase(jobId, input, startedAt, researchBundle);
+    const researchBundle = await runResearchStep(jobId, input, startedAt);
+    const buildResult = await runBuildStep(jobId, input, startedAt, researchBundle);
+    await persistBuildOutputs(jobId, buildResult);
 
-    await putJson(jobId, 'files.json', result.files);
-    if (result.buildLogTail) {
-      await putText(jobId, 'build.log', result.buildLogTail);
-    }
-
-    if (result.success) {
-      await putBytes(jobId, 'artifact.jar', result.jarBuffer, 'application/java-archive');
-      return finalizeSuccess(jobId, input, startedAt, result);
-    }
-
-    return finalizeFailure(jobId, input, startedAt, result);
+    return buildResult.success
+      ? finalizeCompletedJob(jobId, input, startedAt, buildResult)
+      : finalizeFailedJob(jobId, input, startedAt, buildResult);
   } catch (error) {
-    return finalizeWorkerFailure(jobId, input, startedAt, error);
+    return finalizeWorkerError(jobId, input, startedAt, error);
   }
 }
 
-async function runResearchPhase(jobId, input, startedAt, existing) {
-  await appendStatusActivity(jobId, existing, input, startedAt, `Starting deep official-source research for ${input.loader} ${input.version}.`);
+async function runResearchStep(jobId, input, startedAt) {
+  await appendJobActivity(jobId, input, startedAt, `Starting deep official-source research for ${input.loader} ${input.version}.`);
   const researchBundle = await getDeepBuildResearch(input.loader, input.version, { timeBudgetMs: 115000 });
-  await appendStatusActivity(jobId, existing, input, startedAt, researchBundle?.summary || `Completed deep official-source research for ${input.loader} ${input.version}.`, {
-    buildResearch: researchBundle,
-  });
+  await appendJobActivity(
+    jobId,
+    input,
+    startedAt,
+    researchBundle?.summary || `Completed deep official-source research for ${input.loader} ${input.version}.`,
+    { buildResearch: researchBundle },
+  );
   return researchBundle;
 }
 
-async function runBuildPhase(jobId, input, startedAt, researchBundle) {
+async function runBuildStep(jobId, input, startedAt, researchBundle) {
   return executeBuildJob({
     apiKey: process.env.OPENROUTER_API_KEY,
     loader: input.loader,
@@ -78,75 +78,56 @@ async function runBuildPhase(jobId, input, startedAt, researchBundle) {
     conversation: input.conversation || [],
     researchBundle,
     onActivity: async ({ message, buildResearch }) => {
-      const latest = await getLatestStatus(jobId);
-      await writeStatus(jobId, latest, {
-        ...(latest || {}),
-        jobId,
-        status: 'running',
-        loader: input.loader,
-        version: input.version,
-        modName: input.modName,
-        attempts: latest?.attempts || [],
-        createdAt: input.createdAt,
-        startedAt,
-        updatedAt: new Date().toISOString(),
+      await updateRunningStatus(jobId, input, startedAt, latest => ({
+        ...latest,
         buildResearch: buildResearch || latest?.buildResearch || null,
         activityLog: appendActivity(latest?.activityLog, message),
-        provider: 'vercel',
-      });
+      }));
     },
     onBuildStart: async ({ attemptNumber }) => {
-      const latest = await getLatestStatus(jobId);
-      await writeStatus(jobId, latest, {
-        ...(latest || {}),
-        jobId,
-        status: 'running',
-        loader: input.loader,
-        version: input.version,
-        modName: input.modName,
-        attempts: latest?.attempts || [],
-        createdAt: input.createdAt,
-        startedAt,
-        updatedAt: new Date().toISOString(),
-        buildLogTail: latest?.buildLogTail || '',
-        activityLog: appendActivity(latest?.activityLog, `Starting Gradle attempt ${attemptNumber}.`),
+      await updateRunningStatus(jobId, input, startedAt, latest => ({
+        ...latest,
         currentAttempt: attemptNumber,
-        provider: 'vercel',
-      });
+        activityLog: appendActivity(latest?.activityLog, `Starting Gradle attempt ${attemptNumber}.`),
+      }));
     },
     onAttempt: async ({ attempts }) => {
-      const latest = await getLatestStatus(jobId);
       const latestAttempt = attempts[attempts.length - 1];
-      await writeStatus(jobId, latest, {
-        ...(latest || {}),
-        jobId,
-        status: 'running',
-        loader: input.loader,
-        version: input.version,
-        modName: input.modName,
+      await updateRunningStatus(jobId, input, startedAt, latest => ({
+        ...latest,
         attempts,
-        createdAt: input.createdAt,
-        startedAt,
-        updatedAt: new Date().toISOString(),
         buildLogTail: latestAttempt?.logTail || '',
-        activityLog: appendActivity(latest?.activityLog, latestAttempt?.fixSummary ? `Applied AI repair: ${latestAttempt.fixSummary}` : `Completed attempt ${attempts.length}.`),
-        provider: 'vercel',
-      });
+        activityLog: appendActivity(
+          latest?.activityLog,
+          latestAttempt?.fixSummary ? `Applied AI repair: ${latestAttempt.fixSummary}` : `Completed attempt ${attempts.length}.`,
+        ),
+      }));
     },
   });
 }
 
-async function finalizeSuccess(jobId, input, startedAt, result) {
+async function persistBuildOutputs(jobId, buildResult) {
+  await putJson(jobId, 'files.json', buildResult.files);
+  if (buildResult.buildLogTail) {
+    await putText(jobId, 'build.log', buildResult.buildLogTail);
+  }
+  if (buildResult.success) {
+    await putBytes(jobId, 'artifact.jar', buildResult.jarBuffer, 'application/java-archive');
+  }
+}
+
+async function finalizeCompletedJob(jobId, input, startedAt, buildResult) {
   const completedAt = new Date().toISOString();
-  await putStatus(jobId, {
+  await writeJobStatus(jobId, {
+    ...(await getLatestStatus(jobId)),
     jobId,
     status: 'completed',
     loader: input.loader,
     version: input.version,
     modName: input.modName,
-    attempts: result.attempts,
-    jarFileName: result.jarFileName,
-    buildLogTail: result.buildLogTail || '',
+    attempts: buildResult.attempts,
+    jarFileName: buildResult.jarFileName,
+    buildLogTail: buildResult.buildLogTail || '',
     activityLog: appendActivity((await getLatestStatus(jobId))?.activityLog, 'Build completed successfully and the JAR is ready.'),
     createdAt: input.createdAt,
     startedAt,
@@ -157,18 +138,19 @@ async function finalizeSuccess(jobId, input, startedAt, result) {
   return { status: 'completed' };
 }
 
-async function finalizeFailure(jobId, input, startedAt, result) {
+async function finalizeFailedJob(jobId, input, startedAt, buildResult) {
   const failedAt = new Date().toISOString();
-  await putStatus(jobId, {
+  await writeJobStatus(jobId, {
+    ...(await getLatestStatus(jobId)),
     jobId,
     status: 'failed',
     loader: input.loader,
     version: input.version,
     modName: input.modName,
-    attempts: result.attempts,
-    message: result.message || 'Build failed.',
-    buildLogTail: result.buildLogTail || '',
-    activityLog: appendActivity((await getLatestStatus(jobId))?.activityLog, `Build failed: ${result.message || 'unknown error'}`),
+    attempts: buildResult.attempts,
+    message: buildResult.message || 'Build failed.',
+    buildLogTail: buildResult.buildLogTail || '',
+    activityLog: appendActivity((await getLatestStatus(jobId))?.activityLog, `Build failed: ${buildResult.message || 'unknown error'}`),
     createdAt: input.createdAt,
     startedAt,
     completedAt: failedAt,
@@ -178,17 +160,18 @@ async function finalizeFailure(jobId, input, startedAt, result) {
   return { status: 'failed' };
 }
 
-async function finalizeWorkerFailure(jobId, input, startedAt, error) {
+async function finalizeWorkerError(jobId, input, startedAt, error) {
   const failedAt = new Date().toISOString();
-  await putStatus(jobId, {
+  await writeJobStatus(jobId, {
+    ...(await getLatestStatus(jobId)),
     jobId,
     status: 'failed',
     loader: input.loader,
     version: input.version,
     modName: input.modName,
     attempts: [],
-    message: error.message || 'Background build worker failed unexpectedly.',
-    activityLog: appendActivity((await getLatestStatus(jobId))?.activityLog, `Worker error: ${error.message || 'unexpected failure'}`),
+    message: error?.message || 'Background build worker failed unexpectedly.',
+    activityLog: appendActivity((await getLatestStatus(jobId))?.activityLog, `Worker error: ${error?.message || 'unexpected failure'}`),
     createdAt: input.createdAt,
     startedAt,
     completedAt: failedAt,
@@ -198,46 +181,51 @@ async function finalizeWorkerFailure(jobId, input, startedAt, error) {
   return { status: 'failed' };
 }
 
-async function appendStatusActivity(jobId, existing, input, startedAt, message, extra = {}) {
+async function appendJobActivity(jobId, input, startedAt, message, extra = {}) {
+  await updateRunningStatus(jobId, input, startedAt, latest => ({
+    ...latest,
+    ...extra,
+    activityLog: appendActivity(latest?.activityLog, message),
+  }));
+}
+
+async function updateRunningStatus(jobId, input, startedAt, mapper) {
   const latest = await getLatestStatus(jobId);
-  await writeStatus(jobId, latest, {
+  const mapped = mapper(latest || {});
+  await writeJobStatus(jobId, {
     ...(latest || {}),
     jobId,
     status: 'running',
     loader: input.loader,
     version: input.version,
     modName: input.modName,
-    attempts: existing?.attempts || [],
+    attempts: latest?.attempts || [],
     createdAt: input.createdAt,
     startedAt,
     updatedAt: new Date().toISOString(),
-    activityLog: appendActivity(latest?.activityLog, message),
     provider: 'vercel',
-    ...extra,
+    ...mapped,
   });
 }
 
-async function writeStatus(jobId, current, next) {
-  await putStatus(jobId, {
-    ...(current || {}),
-    ...next,
-  });
+async function writeJobStatus(jobId, status) {
+  await putStatus(jobId, { ...status, jobId });
 }
 
 function appendActivity(existing, message) {
-  const next = Array.isArray(existing) ? existing.slice(-39) : [];
+  const entries = Array.isArray(existing) ? existing.slice(-(MAX_ACTIVITY_ENTRIES - 1)) : [];
   if (message) {
-    next.push({ time: new Date().toISOString(), message: String(message) });
+    entries.push({ time: new Date().toISOString(), message: String(message) });
   }
-  return next;
+  return entries;
 }
 
-async function retry(factory, attempts = STATUS_RETRY_ATTEMPTS, delayMs = STATUS_RETRY_DELAY_MS) {
+async function retryRead(factory, attempts = STATUS_READ_RETRIES, delayMs = STATUS_READ_DELAY_MS) {
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const value = await factory();
     if (value) return value;
     if (attempt < attempts) {
-      await delay(delayMs);
+      await sleep(delayMs);
     }
   }
   return null;
@@ -245,8 +233,4 @@ async function retry(factory, attempts = STATUS_RETRY_ATTEMPTS, delayMs = STATUS
 
 function isFinalStatus(status) {
   return status === 'completed' || status === 'failed';
-}
-
-function delay(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
 }
