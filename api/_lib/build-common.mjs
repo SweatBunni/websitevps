@@ -6,7 +6,8 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { x as tarExtract } from 'tar';
 
-const MAX_BUILD_ATTEMPTS = 3;
+const MAX_BUILD_ATTEMPTS = 10;
+const MAX_REPAIR_ATTEMPTS_WITHOUT_PROGRESS = 3;
 const MAX_AI_REPAIR_RETRIES = 3;
 const BUILD_TIMEOUT_MS = 14 * 60 * 1000;
 const MAX_LOG_CHARS = 32000;
@@ -22,6 +23,11 @@ export async function executeBuildJob({ apiKey, loader, version, modName, files,
   normalizeGeneratedFiles(projectFiles, loader, version);
   const attempts = [];
 
+  // Track consecutive repair rounds that produced no file changes, so we can
+  // detect a true dead-end where the AI keeps returning the same non-fix.
+  let stuckRepairRounds = 0;
+  let previousLogTail = null;
+
   for (let attemptNumber = 1; attemptNumber <= MAX_BUILD_ATTEMPTS; attemptNumber += 1) {
     const buildResult = await runGradleBuild(projectFiles, loader, version);
     const attempt = {
@@ -35,6 +41,7 @@ export async function executeBuildJob({ apiKey, loader, version, modName, files,
     attempts.push(attempt);
     await notifyAttempt(onAttempt, attempts, projectFiles);
 
+    // Hard stop: environment problems (missing Java, etc.) cannot be repaired.
     if (buildResult.environmentError) {
       return {
         success: false,
@@ -56,17 +63,25 @@ export async function executeBuildJob({ apiKey, loader, version, modName, files,
       };
     }
 
+    // Last attempt — give up.
     if (attemptNumber === MAX_BUILD_ATTEMPTS) {
       return {
         success: false,
-        message: 'Build failed after AI repair attempts.',
+        message: `Build failed after ${MAX_BUILD_ATTEMPTS} attempts with AI repair.`,
         attempts,
         files: projectFiles,
         buildLogTail: attempt.logTail,
       };
     }
 
-    let repair;
+    // If the log is identical to the previous round the AI already saw this
+    // exact failure and its fix didn't help — count that as a stuck round.
+    const logUnchanged = previousLogTail !== null && attempt.logTail === previousLogTail;
+    previousLogTail = attempt.logTail;
+
+    // Request a repair. If the AI fails to respond, log it and try again next
+    // round rather than aborting immediately.
+    let repair = null;
     try {
       repair = await requestBuildFix({
         apiKey,
@@ -77,81 +92,61 @@ export async function executeBuildJob({ apiKey, loader, version, modName, files,
         files: projectFiles,
         buildLog: attempt.logTail,
         attemptNumber,
+        requireConcreteChanges: stuckRepairRounds > 0,
+        previousSummary: attempts.length > 1 ? (attempts[attempts.length - 2].fixSummary || '') : '',
+        previousAttempts: attempts.slice(0, -1),
       });
     } catch (error) {
-      return {
-        success: false,
-        message: error?.message || 'The AI repair step failed.',
-        attempts,
-        files: projectFiles,
-        buildLogTail: attempt.logTail,
-      };
+      // AI call failed (network, rate-limit after retries, etc.).  If it's a
+      // rate-limit we surface it immediately; otherwise keep trying.
+      const msg = error?.message || '';
+      if (/rate limit/i.test(msg)) {
+        return {
+          success: false,
+          message: msg,
+          attempts,
+          files: projectFiles,
+          buildLogTail: attempt.logTail,
+        };
+      }
+      attempt.fixSummary = `AI repair call failed (${msg}); retrying build as-is.`;
+      await notifyAttempt(onAttempt, attempts, projectFiles);
+      stuckRepairRounds += 1;
+      if (stuckRepairRounds >= MAX_REPAIR_ATTEMPTS_WITHOUT_PROGRESS) {
+        return {
+          success: false,
+          message: `Build repair stalled after ${stuckRepairRounds} consecutive unsuccessful AI repair rounds.`,
+          attempts,
+          files: projectFiles,
+          buildLogTail: attempt.logTail,
+        };
+      }
+      continue;
     }
 
-    if (!repair || !repair.files || repair.files.length === 0) {
-      return {
-        success: false,
-        message: repair?.summary || 'The AI could not produce a repair for the failed build.',
-        attempts,
-        files: projectFiles,
-        buildLogTail: attempt.logTail,
-      };
-    }
+    // Apply whatever files the AI returned (may be empty).
+    const changedFiles = (repair && Array.isArray(repair.files) && repair.files.length > 0)
+      ? applyFileUpdates(projectFiles, repair.files, loader, version)
+      : [];
 
-    const changedFiles = applyFileUpdates(projectFiles, repair.files, loader, version);
-    attempt.fixSummary = repair.summary || 'Applied AI build fixes.';
+    attempt.fixSummary = repair?.summary || 'Applied AI build fixes.';
     attempt.changedFiles = changedFiles;
     await notifyAttempt(onAttempt, attempts, projectFiles);
 
-    if (changedFiles.length === 0) {
-      let retryRepair;
-      try {
-        retryRepair = await requestBuildFix({
-          apiKey,
-          loader,
-          version,
-          modName,
-          conversation,
-          files: projectFiles,
-          buildLog: attempt.logTail,
-          attemptNumber,
-          requireConcreteChanges: true,
-          previousSummary: repair.summary || '',
-        });
-      } catch (error) {
+    if (changedFiles.length === 0 || logUnchanged) {
+      stuckRepairRounds += 1;
+      if (stuckRepairRounds >= MAX_REPAIR_ATTEMPTS_WITHOUT_PROGRESS) {
         return {
           success: false,
-          message: error?.message || 'The stricter AI repair retry failed.',
+          message: `Build repair stalled: the AI made no effective changes after ${stuckRepairRounds} consecutive rounds. Last repair summary: ${repair?.summary || 'none'}.`,
           attempts,
           files: projectFiles,
           buildLogTail: attempt.logTail,
         };
       }
-
-      if (!retryRepair || !retryRepair.files || retryRepair.files.length === 0) {
-        return {
-          success: false,
-          message: retryRepair?.summary || 'The AI responded, but it did not change any project files.',
-          attempts,
-          files: projectFiles,
-          buildLogTail: attempt.logTail,
-        };
-      }
-
-      const retryChangedFiles = applyFileUpdates(projectFiles, retryRepair.files, loader, version);
-      attempt.fixSummary = retryRepair.summary || repair.summary || 'Applied AI build fixes after retry.';
-      attempt.changedFiles = retryChangedFiles;
-      await notifyAttempt(onAttempt, attempts, projectFiles);
-
-      if (retryChangedFiles.length === 0) {
-        return {
-          success: false,
-          message: retryRepair.summary || 'The AI responded, but it still did not change any project files.',
-          attempts,
-          files: projectFiles,
-          buildLogTail: attempt.logTail,
-        };
-      }
+    } else {
+      // Progress was made — reset the stuck counter.
+      stuckRepairRounds = 0;
     }
   }
 
@@ -390,12 +385,17 @@ function isRetryableAiStatus(status) {
   return status === 429 || status === 503 || status === 502 || status === 504;
 }
 
-async function requestBuildFix({ apiKey, loader, version, modName, conversation, files, buildLog, attemptNumber, requireConcreteChanges = false, previousSummary = '' }) {
+async function requestBuildFix({ apiKey, loader, version, modName, conversation, files, buildLog, attemptNumber, requireConcreteChanges = false, previousSummary = '', previousAttempts = [] }) {
   const repairFiles = collectRepairFiles(files, buildLog).map(({ path: filePath, content }) => ({
     path: filePath,
     content: truncateRepairFileContent(content, filePath),
   }));
   const trimmedBuildLog = tail(buildLog, MAX_REPAIR_LOG_CHARS);
+
+  // Build a concise history of what was already tried so the AI doesn't repeat itself.
+  const attemptHistory = previousAttempts
+    .filter(a => a.fixSummary)
+    .map(a => ({ attempt: a.attempt, summary: a.fixSummary, changedFiles: a.changedFiles || [] }));
 
   const requestBody = {
     model: process.env.MISTRAL_MODEL || 'codestral-latest',
@@ -420,7 +420,10 @@ async function requestBuildFix({ apiKey, loader, version, modName, conversation,
           requireConcreteChanges
             ? 'Your previous repair attempt did not change any project files. You must change at least one relevant file if the build log is fixable.'
             : 'If the build log is fixable, make concrete file changes rather than restating the problem.',
-        ].join('\n'),
+          attemptHistory.length > 0
+            ? `Previous repair attempts that did NOT fully fix the build: ${JSON.stringify(attemptHistory)}. Do not repeat those same changes. Try a different approach.`
+            : '',
+        ].filter(Boolean).join('\n'),
       },
       {
         role: 'user',
@@ -431,6 +434,7 @@ async function requestBuildFix({ apiKey, loader, version, modName, conversation,
           attemptNumber,
           requireConcreteChanges,
           previousSummary,
+          attemptHistory,
           recentConversation: Array.isArray(conversation) ? conversation.slice(-3) : [],
           buildLog: trimmedBuildLog,
           files: repairFiles,
