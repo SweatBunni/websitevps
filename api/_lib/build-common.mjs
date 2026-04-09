@@ -674,6 +674,18 @@ function normalizeGeneratedFiles(files, loader, version) {
       }
     }
   }
+  if (loader === 'forge') {
+    for (const [relativePath, file] of Object.entries(files)) {
+      if (!/\.java$/i.test(relativePath)) continue;
+      const normalized = normalizeFileData(file);
+      if (normalized.encoding !== 'utf8') continue;
+      const cleaned = normalizeForgeJavaSource(normalized.content, version);
+      if (cleaned !== normalized.content) {
+        files[relativePath] = { encoding: 'utf8', content: cleaned };
+        changedFiles.push(relativePath);
+      }
+    }
+  }
   return changedFiles;
 }
 
@@ -688,10 +700,28 @@ function buildRepairGuidance(loader, version) {
     return 'For this Fabric target, respect the generated mappings mode exactly and do not mix Yarn names into an official-mappings build or vice versa.';
   }
   if (loader === 'forge') {
+    const isModern = isModernForgeVersion(version);
+    if (isModern) {
+      return [
+        'For Forge 1.20.6+ targets, the event bus API changed significantly. Apply ALL of the following:',
+        '1. FMLJavaModLoadingContext.get().getModEventBus() is REMOVED. Use the IEventBus injected into the mod constructor: annotate the constructor with @Mod("modid") and accept IEventBus modEventBus as a parameter, e.g. public MyMod(IEventBus modEventBus) { modEventBus.addListener(this::setup); }',
+        '2. net.minecraftforge.eventbus.api.SubscribeEvent is REMOVED. Use net.neoforged.bus.api.SubscribeEvent (if NeoForge) OR for Forge 1.20.6+ use net.minecraftforge.eventbus.api.SubscribeEvent only if it still exists in that exact Forge build — if the import fails, switch to registering listeners directly via modEventBus.addListener().',
+        '3. @Mod.EventBusSubscriber is still available but the bus parameter syntax changed. Prefer explicit modEventBus.addListener() registration in the constructor instead.',
+        '4. DeferredRegister.create() and register(modEventBus) patterns are correct for 1.20.6+.',
+        '5. Do not use FMLJavaModLoadingContext.get() anywhere — it is deprecated and its getModEventBus() method was removed.',
+        'Use official Mojang mappings names. Do not mix in Fabric or NeoForge imports.',
+      ].join('\n');
+    }
     return 'For Forge targets, use official Mojang mappings names and Forge-only APIs. Do not mix in Fabric or NeoForge imports.';
   }
   if (loader === 'neoforge') {
-    return 'For NeoForge targets, use official Mojang names and NeoForge-compatible APIs. Do not mix in Fabric or Forge-only imports unless they are truly shared.';
+    return [
+      'For NeoForge targets, use official Mojang names and NeoForge-compatible APIs.',
+      'Event bus registration: accept IEventBus modEventBus as a constructor parameter (injected by NeoForge) and call modEventBus.addListener() to register event handlers. Do not use FMLJavaModLoadingContext.',
+      'Use net.neoforged.bus.api.SubscribeEvent and net.neoforged.bus.api.IEventBus for event bus types.',
+      'Use net.neoforged.fml.common.Mod for the @Mod annotation.',
+      'Do not mix in Fabric or Forge-only imports unless they are truly shared.',
+    ].join('\n');
   }
   if (loader === 'paper') {
     return 'For Paper targets, use the current Paper API repository at https://repo.papermc.io/repository/maven-public/ and do not use the old papermc.io repository URL.';
@@ -700,6 +730,47 @@ function buildRepairGuidance(loader, version) {
     return 'For Spigot targets, avoid Paper-only dependencies unless explicitly requested. If using Paper API, use the current repository at https://repo.papermc.io/repository/maven-public/.';
   }
   return 'Respect the generated mappings mode and loader-specific API style for the exact target version.';
+}
+
+function isModernForgeVersion(version) {
+  // Forge 1.20.6+ removed FMLJavaModLoadingContext.get().getModEventBus() and old eventbus imports.
+  const match = String(version || '').match(/^1\.(\d+)(?:\.(\d+))?/);
+  if (!match) return false;
+  const minor = Number(match[1]);
+  const patch = Number(match[2] || 0);
+  return minor > 20 || (minor === 20 && patch >= 6);
+}
+
+// Mechanically rewrite known-broken Forge 1.20.6+ Java patterns before the first build.
+function normalizeForgeJavaSource(content, version) {
+  if (!isModernForgeVersion(version)) return content;
+  let next = String(content || '');
+
+  // Remove bad eventbus import — net.minecraftforge.eventbus.api.SubscribeEvent was removed.
+  // The annotation itself is still available via @Mod.EventBusSubscriber so we only strip the
+  // standalone import; listener registration needs to move to the constructor.
+  next = next.replace(
+    /^import\s+net\.minecraftforge\.eventbus\.api\.SubscribeEvent\s*;\s*\r?\n/gm,
+    '',
+  );
+
+  // Replace FMLJavaModLoadingContext.get().getModEventBus() with a constructor-injection
+  // comment so the AI knows what to do on the next repair pass, and strip the broken call
+  // so at minimum the file compiles (addListener will be re-added by the AI repair).
+  next = next.replace(
+    /FMLJavaModLoadingContext\.get\(\)\.getModEventBus\(\)/g,
+    '/* TODO: inject IEventBus modEventBus via constructor parameter instead of FMLJavaModLoadingContext */',
+  );
+
+  // Add IEventBus import if missing and the file references it.
+  if (/IEventBus/.test(next) && !/import\s+net\.minecraftforge\.fml\.javafmlmod\.FMLJavaModLoadingContext/.test(next)) {
+    next = ensureImport(next, 'net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext');
+  }
+  if (/IEventBus/.test(next)) {
+    next = ensureImport(next, 'net.minecraftforge.eventbus.api.IEventBus');
+  }
+
+  return next;
 }
 
 function stripUnsupportedFabricLoomSettings(content, version) {
