@@ -179,11 +179,6 @@ async function runGradleBuild(files, loader, version) {
     : ['build', '--stacktrace', '--console=plain', '--no-daemon'];
 
   try {
-    await writeProjectFiles(tempRoot, files);
-    if (!isWindows) {
-      await fs.chmod(path.join(tempRoot, 'gradlew'), 0o755);
-    }
-
     let javaRuntime;
     try {
       javaRuntime = await ensureJavaRuntime(getRequiredJavaVersion(loader, version));
@@ -195,6 +190,14 @@ async function runGradleBuild(files, loader, version) {
         exitCode: null,
         log: '',
       };
+    }
+
+    await writeProjectFiles(tempRoot, files);
+    if (javaRuntime.javaHome) {
+      await pinGradleJavaHome(tempRoot, javaRuntime.javaHome);
+    }
+    if (!isWindows) {
+      await fs.chmod(path.join(tempRoot, 'gradlew'), 0o755);
     }
 
     const execResult = await spawnWithOutput(command, args, {
@@ -266,6 +269,29 @@ async function writeProjectFiles(rootDir, files) {
       await fs.writeFile(absPath, normalized.content, 'utf8');
     }
   }
+}
+
+async function pinGradleJavaHome(rootDir, javaHome) {
+  const gradlePropertiesPath = path.join(rootDir, 'gradle.properties');
+  const normalizedJavaHome = String(javaHome || '').replace(/\\/g, '/');
+  const propertyLine = `org.gradle.java.home=${normalizedJavaHome}`;
+
+  let content = '';
+  try {
+    content = await fs.readFile(gradlePropertiesPath, 'utf8');
+  } catch {
+    content = '';
+  }
+
+  const withoutExisting = content
+    .replace(/^\s*org\.gradle\.java\.home\s*=.*(?:\r?\n|$)/gm, '')
+    .trimEnd();
+
+  const nextContent = withoutExisting
+    ? `${withoutExisting}\n${propertyLine}\n`
+    : `${propertyLine}\n`;
+
+  await fs.writeFile(gradlePropertiesPath, nextContent, 'utf8');
 }
 
 async function findBuiltJar(rootDir) {
