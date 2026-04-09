@@ -71,6 +71,17 @@ export async function createChatStreamResponse({
   version,
   latestUserMessage,
 }) {
+  const contentType = String(upstream.headers.get('content-type') || '').toLowerCase();
+  if (!contentType.includes('text/event-stream')) {
+    return createNonStreamingChatResponse({
+      upstream,
+      fallbackModel,
+      loader,
+      version,
+      latestUserMessage,
+    });
+  }
+
   const encoder = new TextEncoder();
   const { readable, writable } = new TransformStream();
   const writer = writable.getWriter();
@@ -98,6 +109,44 @@ export async function createChatStreamResponse({
   });
 
   return new Response(readable, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-store',
+      'X-Accel-Buffering': 'no',
+      Connection: 'keep-alive',
+    },
+  });
+}
+
+async function createNonStreamingChatResponse({
+  upstream,
+  fallbackModel,
+  loader,
+  version,
+  latestUserMessage,
+}) {
+  let payload = {};
+  try {
+    payload = await upstream.json();
+  } catch {
+    payload = {};
+  }
+
+  const model = payload?.model || fallbackModel;
+  const fullResponse = extractNonStreamingText(payload);
+  await rememberChatInteraction({
+    loader,
+    version,
+    prompt: latestUserMessage,
+    response: fullResponse,
+    model,
+  });
+
+  const body = `data: ${JSON.stringify({ delta: fullResponse, model })}\n\n`
+    + `data: ${JSON.stringify({ done: true, model })}\n\n`;
+
+  return new Response(body, {
     status: 200,
     headers: {
       'Content-Type': 'text/event-stream',
@@ -282,6 +331,16 @@ function extractStreamText(chunk) {
     || textFromValue(delta.text)
     || textFromValue(choice?.message?.content)
     || textFromValue(choice?.text)
+    || ''
+  );
+}
+
+function extractNonStreamingText(payload) {
+  const choice = payload?.choices?.[0] || {};
+  return (
+    textFromValue(choice?.message?.content)
+    || textFromValue(choice?.text)
+    || textFromValue(payload?.output_text)
     || ''
   );
 }
