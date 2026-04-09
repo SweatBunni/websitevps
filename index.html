@@ -1827,7 +1827,6 @@ function buildGradle(loader, version, modName) {
     const fabric = getFabricBuildData(version);
     const mappingMode = getTargetMappingMode(loader, version);
     const loomPluginId = 'net.fabricmc.fabric-loom';
-    const dependencyConfig = mappingMode === 'none' ? 'implementation' : 'modImplementation';
     const mappingsLine = mappingMode === 'official'
       ? '    mappings loom.officialMojangMappings()'
       : mappingMode === 'yarn'
@@ -1853,8 +1852,8 @@ repositories {
 dependencies {
     minecraft "com.mojang:minecraft:\${project.minecraft_version}"
 ${mappingsLine}
-    ${dependencyConfig} "net.fabricmc:fabric-loader:\${project.loader_version}"
-${fabric.fabricApiVersion ? `    ${dependencyConfig} "net.fabricmc.fabric-api:fabric-api:\${project.fabric_version}"` : '    // Add Fabric API here if your generated code needs it.'}
+    implementation "net.fabricmc:fabric-loader:\${project.loader_version}"
+${fabric.fabricApiVersion ? `    implementation "net.fabricmc.fabric-api:fabric-api:\${project.fabric_version}"` : '    // Add Fabric API here if your generated code needs it.'}
 }
 
 processResources {

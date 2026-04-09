@@ -923,8 +923,6 @@ function normalizeFabricBuildGradle(content, version, researchedBuild = null) {
         `$1    mappings "net.fabricmc:yarn:\${project.yarn_mappings}:v2"\n`,
       );
     }
-    next = next.replace(/\bimplementation\s+"net\.fabricmc:fabric-loader:/g, 'modImplementation "net.fabricmc:fabric-loader:');
-    next = next.replace(/\bimplementation\s+"net\.fabricmc\.fabric-api:fabric-api:/g, 'modImplementation "net.fabricmc.fabric-api:fabric-api:');
   } else if (mappingMode === 'official') {
     if (!/^\s*mappings\s+loom\.officialMojangMappings\(\)\s*$/m.test(next)) {
       next = next.replace(
@@ -934,11 +932,9 @@ function normalizeFabricBuildGradle(content, version, researchedBuild = null) {
     }
   }
 
-  if (isFabricNonObfuscatedVersion(version)) {
-    next = next.replace(/\bmodImplementation\b/g, 'implementation');
-    next = next.replace(/\bmodCompileOnly\b/g, 'compileOnly');
-    next = next.replace(/\bmodRuntimeOnly\b/g, 'runtimeOnly');
-  }
+  next = next.replace(/\bmodImplementation\b/g, 'implementation');
+  next = next.replace(/\bmodCompileOnly\b/g, 'compileOnly');
+  next = next.replace(/\bmodRuntimeOnly\b/g, 'runtimeOnly');
   return next;
 }
 
