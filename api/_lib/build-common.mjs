@@ -687,7 +687,7 @@ function getRequiredJavaVersion(loader, version) {
   const normalized = String(version || '');
 
   if (/^26\./.test(normalized)) {
-    return 21;
+    return 25;
   }
 
   const match = normalized.match(/^(\d+)\.(\d+)(?:\.(\d+))?/);

@@ -1373,7 +1373,7 @@ function safeModId(modName) {
 
 function getTargetJavaVersion(loader, version) {
   const normalized = String(version || '');
-  if (/^26\./.test(normalized)) return 21;
+  if (/^26\./.test(normalized)) return 25;
 
   const match = normalized.match(/^(\d+)\.(\d+)(?:\.(\d+))?/);
   if (match) {
@@ -2163,6 +2163,10 @@ function generateProjectZip(loader, version, modName = "Example Mod") {
   zip.file("settings.gradle", generateSettingsGradle(loader));
   zip.file("build.gradle", generateBuildGradle(loader, version, modId));
   zip.file("gradle.properties", generateGradleProperties(loader, version, modId));
+  zip.file("gradlew", gradlewScript());
+  zip.file("gradlew.bat", gradlewBatScript());
+  zip.file("gradle/wrapper/gradle-wrapper.properties", gradleWrapperProperties(loader));
+  zip.file("gradle/wrapper/gradle-wrapper.jar", gradleWrapperJarBase64(), { base64: true });
 
   // Source structure
   const basePath = `src/main/java/${pkg.replace(/\./g, "/")}/`;
@@ -2316,6 +2320,10 @@ function createGeneratedProject(loader, version, modName, fullText) {
   files['build.gradle']       = buildGradle(loader, version, modName);
   files['settings.gradle']    = settingsGradle(loader, version, modName);
   files['gradle.properties']  = gradleProps(loader, version, modName);
+  files['gradlew']            = gradlewScript();
+  files['gradlew.bat']        = gradlewBatScript();
+  files['gradle/wrapper/gradle-wrapper.properties'] = gradleWrapperProperties(loader);
+  files['gradle/wrapper/gradle-wrapper.jar'] = { encoding: 'base64', content: gradleWrapperJarBase64() };
 
   if (loader === 'fabric') {
     const ep = `com.example.${modId}.${modName.replace(/\s+/g,'')}`;

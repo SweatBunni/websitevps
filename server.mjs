@@ -1,16 +1,19 @@
 import http from 'node:http';
 import fs from 'node:fs/promises';
+import syncFs from 'node:fs';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 
-import chatHandler from './api/chat.mjs';
-import buildModHandler from './api/build-mod.mjs';
-import buildWorkerHandler from './api/build-mod-worker.mjs';
-import buildStatusHandler from './api/build-mod-status.mjs';
-import buildResultHandler from './api/build-mod-result.mjs';
-
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+loadDotEnv(path.join(__dirname, '.env'));
+
+const { default: chatHandler } = await import('./api/chat.mjs');
+const { default: buildModHandler } = await import('./api/build-mod.mjs');
+const { default: buildWorkerHandler } = await import('./api/build-mod-worker.mjs');
+const { default: buildStatusHandler } = await import('./api/build-mod-status.mjs');
+const { default: buildResultHandler } = await import('./api/build-mod-result.mjs');
+
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -75,6 +78,31 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   console.log(`[codexmc] listening on http://${HOST}:${PORT}`);
 });
+
+function loadDotEnv(envPath) {
+  let raw = '';
+  try {
+    raw = syncFs.readFileSync(envPath, 'utf8');
+  } catch {
+    return;
+  }
+
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const separator = trimmed.indexOf('=');
+    if (separator <= 0) continue;
+
+    const key = trimmed.slice(0, separator).trim();
+    if (!key || Object.prototype.hasOwnProperty.call(process.env, key)) continue;
+
+    let value = trimmed.slice(separator + 1).trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    process.env[key] = value;
+  }
+}
 
 function createWebRequest(req, url) {
   const headers = new Headers();
