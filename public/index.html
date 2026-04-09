@@ -164,6 +164,7 @@ html, body {
   transition: background 0.12s;
   position: relative;
   min-width: 0;
+  flex-wrap: wrap;
 }
 .chat-item:hover { background: var(--bg3); }
 .chat-item.active { background: var(--bg3); border-left: 2px solid var(--amber); padding-left: 6px; }
@@ -177,6 +178,18 @@ html, body {
   color: var(--text2);
 }
 .chat-item.active .chat-item-title { color: var(--text); }
+.chat-item-badge {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--amber);
+  background: rgba(245,158,11,0.12);
+  border: 1px solid rgba(245,158,11,0.25);
+  border-radius: 3px;
+  padding: 1px 4px;
+  flex-shrink: 0;
+  text-transform: uppercase;
+}
 .chat-item-del {
   opacity: 0;
   background: none;
@@ -191,6 +204,25 @@ html, body {
 }
 .chat-item:hover .chat-item-del { opacity: 1; }
 .chat-item-del:hover { color: var(--red); }
+.topbar-share {
+  margin-left: auto;
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text3);
+  border-radius: var(--radius);
+  padding: 3px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  letter-spacing: 0.04em;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+.topbar-share:hover { color: var(--amber); border-color: var(--amber); background: rgba(245,158,11,0.08); }
+.topbar-share.copied { color: #4ade80; border-color: #4ade80; background: rgba(74,222,128,0.08); }
 
 /* sidebar footer */
 .sidebar-foot {
@@ -737,6 +769,10 @@ details pre {
       </button>
       <span id="topbar-title">New Chat</span>
       <span class="topbar-badge">CODESTRAL</span>
+      <button class="topbar-share" id="share-btn" onclick="copyShareLink()" title="Copy link to this chat">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+        SHARE
+      </button>
     </div>
 
     <div id="messages-wrap">
@@ -873,6 +909,8 @@ function normalizeStoredChats(value) {
       title: typeof chat.title === 'string' && chat.title.trim() ? chat.title : 'New Chat',
       created: Number.isFinite(Number(chat.created)) ? Number(chat.created) : Date.now(),
       messages: messages.length ? messages : [{ role: 'system', content: DEFAULT_SYSTEM }],
+      loader: typeof chat.loader === 'string' && chat.loader ? chat.loader : null,
+      version: typeof chat.version === 'string' && chat.version ? chat.version : null,
     };
   }).filter(Boolean);
 }
@@ -946,11 +984,21 @@ window.addEventListener('DOMContentLoaded', () => {
   syncResponsiveLayout(true);
   onLoaderChange();
   renderChatList();
-  if (state.chats.length === 0) newChat();
-  else {
+
+  // Deep-link: if the URL hash matches a saved chat, open it directly
+  const hashId = window.location.hash.slice(1);
+  const linkedChat = hashId ? state.chats.find(c => c.id === hashId) : null;
+
+  if (linkedChat) {
+    state.currentId = linkedChat.id;
+    loadChat(linkedChat.id);
+  } else if (state.chats.length === 0) {
+    newChat();
+  } else {
     state.currentId = state.currentId || state.chats[state.chats.length - 1].id;
     showWelcome(true);
   }
+
   updateSidebarState();
 });
 
@@ -1101,9 +1149,13 @@ function renderChatList() {
     chats.forEach(c => {
       const item = document.createElement('div');
       item.className = 'chat-item' + (c.id === state.currentId ? ' active' : '');
+      const badgeHtml = c.loader
+        ? `<span class="chat-item-badge">${escapeHtml(c.loader)} ${escapeHtml(c.version || '')}</span>`
+        : '';
       item.innerHTML = `
         <span class="chat-item-icon">▸</span>
         <span class="chat-item-title">${escapeHtml(c.title)}</span>
+        ${badgeHtml}
         <button class="chat-item-del" onclick="deleteChat(event,'${c.id}')">×</button>
       `;
       item.addEventListener('click', e => { if (!e.target.classList.contains('chat-item-del')) loadChat(c.id); });
@@ -1114,7 +1166,7 @@ function renderChatList() {
 
 function createDraftChat() {
   const id = 'chat_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);
-  const chat = { id, title: 'New Chat', created: Date.now(), messages: [{ role: 'system', content: state.systemPrompt || DEFAULT_SYSTEM }] };
+  const chat = { id, title: 'New Chat', created: Date.now(), messages: [{ role: 'system', content: state.systemPrompt || DEFAULT_SYSTEM }], loader: null, version: null };
   state.chats.push(chat);
   state.currentId = id;
   return chat;
@@ -1125,6 +1177,7 @@ function newChat() {
   createDraftChat();
   showWelcome(true);
   document.getElementById('topbar-title').textContent = 'New Chat';
+  updateUrlHash(null);
   saveChats();
   closeSidebar();
   document.getElementById('input-box').focus();
@@ -1138,6 +1191,21 @@ function loadChat(id) {
   resetMessages();
   chat.messages.filter(m => m.role !== 'system').forEach(m => appendMessage(m.role, m.content, false));
   document.getElementById('topbar-title').textContent = chat.title;
+
+  // Restore loader/version selectors to what this chat used
+  if (chat.loader) {
+    const loaderSel = document.getElementById('loader-sel');
+    if (loaderSel && loaderSel.value !== chat.loader) {
+      loaderSel.value = chat.loader;
+      onLoaderChange();
+    }
+    if (chat.version) {
+      const versionSel = document.getElementById('version-sel');
+      if (versionSel) versionSel.value = chat.version;
+    }
+  }
+
+  updateUrlHash(id);
   renderChatList();
   closeSidebar();
   scrollToBottom();
@@ -1154,6 +1222,37 @@ function deleteChat(e, id) {
 
 function getCurrentChat() { return state.chats.find(c => c.id === state.currentId); }
 function saveChats() { writeStoredValue('mci_chats', JSON.stringify(state.chats)); renderChatList(); }
+
+function updateUrlHash(chatId) {
+  const hash = chatId ? `#${chatId}` : window.location.pathname;
+  history.replaceState(null, '', chatId ? `${window.location.pathname}${window.location.search}#${chatId}` : window.location.pathname + window.location.search);
+}
+
+function copyShareLink() {
+  const chat = getCurrentChat();
+  if (!chat || !chat.loader) {
+    // No chat started yet
+    return;
+  }
+  const url = `${window.location.origin}${window.location.pathname}#${chat.id}`;
+  navigator.clipboard.writeText(url).then(() => {
+    const btn = document.getElementById('share-btn');
+    btn.classList.add('copied');
+    btn.innerHTML = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> COPIED`;
+    setTimeout(() => {
+      btn.classList.remove('copied');
+      btn.innerHTML = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg> SHARE`;
+    }, 2000);
+  }).catch(() => {
+    // Fallback: select a temporary input
+    const inp = document.createElement('input');
+    inp.value = url;
+    document.body.appendChild(inp);
+    inp.select();
+    document.execCommand('copy');
+    document.body.removeChild(inp);
+  });
+}
 function showWelcome(show = true) { document.getElementById('welcome').style.display = show ? 'flex' : 'none'; }
 function resetMessages() {
   const m = document.getElementById('messages');
@@ -1260,6 +1359,13 @@ async function sendMessage() {
   const version = getSelectedVersion();
   const taggedText = `${buildTargetContext(loader, version)}\n\n[User request]\n${text}`;
   chat.messages.push({ role: 'user', content: taggedText });
+
+  // Lock loader/version to this chat on first real message
+  if (!chat.loader) {
+    chat.loader = loader;
+    chat.version = version;
+  }
+  updateUrlHash(chat.id);
 
   const typing = document.getElementById('typing');
   typing.classList.remove('hidden');
