@@ -909,7 +909,8 @@ function getSelectedSetup() {
 }
 
 </script>
-<script src="/app-build.js"></script>
+  <script src="https://js.puter.com/v2/"></script>
+  <script src="/app-build.js"></script>
 <script>
 const DEFAULT_SYSTEM = `You are CodexMC, an expert Minecraft Java Edition coding assistant.
 You specialize in:
@@ -1576,64 +1577,36 @@ async function sendMessage() {
   scrollToBottom();
 
   try {
-    const { response } = await fetchBackend('chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'qwen/qwen3.6-plus',
-        messages: buildModelMessages(chat.messages),
-        loader, version,
-        max_tokens: 4096,
-        temperature: 0.2,
-      })
-    });
-
-    if (!response.ok) {
-      setTypingVisible(false);
-      const err = await response.json().catch(() => ({}));
-      appendMessage('ai', `**Error:** ${err.message || `HTTP ${response.status}`}`);
-      throw new Error('non-ok response');
+    if (!window.puter || !window.puter.ai || typeof window.puter.ai.chat !== 'function') {
+      throw new Error('Puter.js did not load.');
     }
 
-    addChatActivity('Connected to the AI stream. Waiting for the first tokens.');
+    const stream = await window.puter.ai.chat(buildModelMessages(chat.messages), {
+      model: 'qwen/qwen3.6-plus',
+      stream: true,
+    });
 
-    // Read SSE stream
-    const reader = response.body.getReader();
-    const dec = new TextDecoder();
-    let buf = '', fullText = '', contentEl = null;
+    addChatActivity('Connected to Puter.js. Waiting for the first tokens.');
+
+    let fullText = '', contentEl = null;
     let announcedStreaming = false;
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      const lines = buf.split('\n');
-      buf = lines.pop() ?? '';
-      for (const line of lines) {
-        const t = line.trim();
-        if (!t || !t.startsWith('data:')) continue;
-        try {
-          const evt = JSON.parse(t.slice(5).trim());
-          if (evt.error) throw new Error(evt.error);
-          if (evt.delta) {
-            if (!announcedStreaming) {
-              announcedStreaming = true;
-              addChatActivity('Streaming researched response back into the chat.');
-            }
-            fullText += evt.delta;
-            if (!contentEl) {
-              contentEl = appendMessage('ai', fullText);
-            } else {
-              contentEl.innerHTML = renderMd(fullText);
-              scrollToBottom();
-            }
-          }
-          if (evt.done && !contentEl && fullText) {
-            contentEl = appendMessage('ai', fullText);
-          }
-        } catch (pe) {
-          if (pe.message !== 'Unexpected end of JSON input') throw pe;
-        }
+    for await (const part of stream) {
+      const delta = typeof part === 'string'
+        ? part
+        : (part?.text || part?.delta || part?.content || '');
+      if (!delta) continue;
+
+      if (!announcedStreaming) {
+        announcedStreaming = true;
+        addChatActivity('Streaming researched response back into the chat.');
+      }
+      fullText += delta;
+      if (!contentEl) {
+        contentEl = appendMessage('ai', fullText);
+      } else {
+        contentEl.innerHTML = renderMd(fullText);
+        scrollToBottom();
       }
     }
 
