@@ -608,13 +608,25 @@ function normalizeGeneratedFiles(files, loader, version) {
       changedFiles.push('build.gradle');
     }
   }
+  if (loader === 'fabric') {
+    for (const [relativePath, file] of Object.entries(files)) {
+      if (!/\.java$/i.test(relativePath)) continue;
+      const normalized = normalizeFileData(file);
+      if (normalized.encoding !== 'utf8') continue;
+      const cleaned = normalizeFabricJavaSource(normalized.content, version);
+      if (cleaned !== normalized.content) {
+        files[relativePath] = { encoding: 'utf8', content: cleaned };
+        changedFiles.push(relativePath);
+      }
+    }
+  }
   return changedFiles;
 }
 
 function buildRepairGuidance(loader, version) {
   if (loader === 'fabric') {
     if (version === '1.21' || version === '1.21.1' || version === '1.21.4' || version === '1.21.11') {
-      return 'For this Fabric target, assume the project uses Yarn mappings. Prefer Yarn-style Minecraft imports and prefer Item.Settings and AbstractBlock.Settings.copy(...) over outdated FabricItemSettings or FabricBlockSettings helpers.';
+      return 'For this Fabric target, assume the project uses Yarn mappings. Prefer Yarn-style Minecraft imports, use Identifier.of(namespace, path) instead of new Identifier(...), and prefer Item.Settings and AbstractBlock.Settings.copy(...) over outdated FabricItemSettings or FabricBlockSettings helpers.';
     }
     if (isFabricNonObfuscatedVersion(version)) {
       return 'For Fabric 26.x targets, assume the environment is non-obfuscated. Do not add mappings dependencies, and do not use old Yarn-era remap assumptions.';
@@ -666,6 +678,18 @@ function normalizeFabricBuildGradle(content, version) {
     next = next.replace(/\bmodRuntimeOnly\b/g, 'runtimeOnly');
   }
   return next;
+}
+
+function normalizeFabricJavaSource(content, version) {
+  let next = String(content || '');
+  if (usesModernFabricIdentifierFactory(version)) {
+    next = next.replace(/\bnew\s+Identifier\s*\(/g, 'Identifier.of(');
+  }
+  return next;
+}
+
+function usesModernFabricIdentifierFactory(version) {
+  return version === '1.21' || version === '1.21.1' || version === '1.21.4' || version === '1.21.11' || isFabricNonObfuscatedVersion(version);
 }
 
 function isFabricNonObfuscatedVersion(version) {

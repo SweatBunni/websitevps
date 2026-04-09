@@ -24,6 +24,7 @@ function researchMsg(loader, version) {
   const lines = [];
   if (loader === 'fabric' && mode === 'yarn') {
     lines.push(`Fabric ${version} uses Yarn mappings. Use net.minecraft.block.*, net.minecraft.item.*, net.minecraft.registry.*, net.minecraft.util.Identifier.`);
+    lines.push('For modern Fabric/Yarn targets, Identifier constructors are not public. Use Identifier.of(namespace, path) or Identifier.of(fullId).');
     lines.push('Prefer Item.Settings and AbstractBlock.Settings.copy(...) - avoid FabricItemSettings/FabricBlockSettings unless certain.');
   }
   if (loader === 'fabric' && mode === 'none') {
