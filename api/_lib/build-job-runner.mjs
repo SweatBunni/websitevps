@@ -62,7 +62,12 @@ export async function runBuildJobInput(jobId, input) {
         createdAt: input.createdAt,
         startedAt,
         updatedAt: new Date().toISOString(),
-        activityLog: appendActivity(latest?.activityLog, `Generated ${textureResult.generatedTextures.length} texture asset(s).`),
+        activityLog: appendActivity(
+          latest?.activityLog,
+          textureResult.generatedTextures.length
+            ? `Generated ${textureResult.generatedTextures.length} texture asset(s).`
+            : `Texture generation finished with ${textureResult.textureWarnings.length} warning(s) and no new textures.`,
+        ),
         provider: 'vercel',
       });
     }

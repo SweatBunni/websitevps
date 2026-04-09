@@ -48,7 +48,9 @@ export async function enrichProjectWithGeneratedTextures({ apiKey, loader, versi
 
 function detectTextureTargets({ loader, modId, files }) {
   const targets = new Map();
-  const textEntries = Object.entries(files).filter(([, file]) => file && file.encoding !== 'base64' && typeof file.content === 'string');
+  const textEntries = Object.entries(files)
+    .map(([filePath, file]) => [filePath, normalizeTextFile(file)])
+    .filter(([, file]) => file);
 
   for (const [filePath, file] of textEntries) {
     const normalizedPath = filePath.replace(/\\/g, '/');
@@ -58,12 +60,16 @@ function detectTextureTargets({ loader, modId, files }) {
     collectTargets(targets, content, 'item', /Registr(?:y|ies)\.ITEM[\s\S]{0,260}?(?:Identifier\.of|new Identifier|ResourceLocation\.fromNamespaceAndPath|new ResourceLocation)\s*\([^,\n]+,\s*"([a-z0-9_/-]+)"/g);
     collectTargets(targets, content, 'block', /(?:DeferredRegister\.Blocks|DeferredBlock<|RegistryObject<\s*Block|BLOCKS\.register)\b[\s\S]{0,160}?"([a-z0-9_/-]+)"/g);
     collectTargets(targets, content, 'item', /(?:DeferredRegister\.Items|DeferredItem<|RegistryObject<\s*Item|ITEMS\.register)\b[\s\S]{0,160}?"([a-z0-9_/-]+)"/g);
+    collectTargets(targets, content, 'block', /(?:BlockItem\s*\(\s*[A-Z0-9_]+\s*,[\s\S]{0,80}?"([a-z0-9_/-]+)"|new\s+Block\s*\([\s\S]{0,120}?"([a-z0-9_/-]+)")/g);
+    collectTargets(targets, content, 'item', /(?:new\s+Item\s*\(|Item\.Settings[\s\S]{0,120}?"([a-z0-9_/-]+)")/g);
 
     if (/Blocks?\.java$/i.test(normalizedPath)) {
       collectTargets(targets, content, 'block', /"([a-z0-9_/-]+)"/g);
     } else if (/Items?\.java$/i.test(normalizedPath)) {
       collectTargets(targets, content, 'item', /"([a-z0-9_/-]+)"/g);
     }
+
+    collectTargetsFromResourceFile(targets, normalizedPath, content, modId);
   }
 
   const list = Array.from(targets.values())
@@ -82,13 +88,53 @@ function detectTextureTargets({ loader, modId, files }) {
 function collectTargets(targets, content, kind, regex) {
   let match;
   while ((match = regex.exec(content)) !== null) {
-    const id = sanitizeTextureId(match[1]);
+    const rawId = match.slice(1).find(Boolean);
+    const id = sanitizeTextureId(rawId);
     if (!id) continue;
     const key = `${kind}:${id}`;
     if (!targets.has(key)) {
       targets.set(key, { kind, id });
     }
   }
+}
+
+function collectTargetsFromResourceFile(targets, normalizedPath, content, modId) {
+  const blockModelMatch = normalizedPath.match(new RegExp(`^src/main/resources/assets/${escapeRegExp(modId)}/models/block/([a-z0-9_/-]+)\\.json$`, 'i'));
+  if (blockModelMatch) {
+    const id = sanitizeTextureId(blockModelMatch[1]);
+    if (id) targets.set(`block:${id}`, { kind: 'block', id });
+  }
+
+  const itemModelMatch = normalizedPath.match(new RegExp(`^src/main/resources/assets/${escapeRegExp(modId)}/models/item/([a-z0-9_/-]+)\\.json$`, 'i'));
+  if (itemModelMatch && /minecraft:item\/generated|minecraft:item\/handheld/i.test(content)) {
+    const id = sanitizeTextureId(itemModelMatch[1]);
+    if (id) targets.set(`item:${id}`, { kind: 'item', id });
+  }
+
+  const blockTextureRefs = Array.from(content.matchAll(/"(?:all|top|bottom|side|end|particle|north|south|east|west|up|down)"\s*:\s*"[^"]*?:block\/([a-z0-9_/-]+)"/g));
+  blockTextureRefs.forEach(match => {
+    const id = sanitizeTextureId(match[1]);
+    if (id) targets.set(`block:${id}`, { kind: 'block', id });
+  });
+
+  const itemTextureRefs = Array.from(content.matchAll(/"layer\d+"\s*:\s*"[^"]*?:item\/([a-z0-9_/-]+)"/g));
+  itemTextureRefs.forEach(match => {
+    const id = sanitizeTextureId(match[1]);
+    if (id) targets.set(`item:${id}`, { kind: 'item', id });
+  });
+}
+
+function normalizeTextFile(file) {
+  if (typeof file === 'string') {
+    return { encoding: 'utf8', content: file };
+  }
+  if (!file || file.encoding === 'base64' || typeof file.content !== 'string') {
+    return null;
+  }
+  return {
+    encoding: 'utf8',
+    content: file.content,
+  };
 }
 
 function inferFallbackKind(loader, textEntries) {
@@ -311,9 +357,12 @@ function mergeLangEntry(files, modId, target) {
   const langPath = `src/main/resources/assets/${modId}/lang/en_us.json`;
   let json = {};
   const existing = files[langPath];
-  if (existing && existing.encoding !== 'base64') {
+  const normalizedExisting = typeof existing === 'string'
+    ? { encoding: 'utf8', content: existing }
+    : existing;
+  if (normalizedExisting && normalizedExisting.encoding !== 'base64') {
     try {
-      json = JSON.parse(existing.content || '{}');
+      json = JSON.parse(normalizedExisting.content || '{}');
     } catch {
       json = {};
     }
@@ -357,6 +406,10 @@ function toDisplayName(id) {
     .filter(Boolean)
     .map(part => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ') || 'Generated Asset';
+}
+
+function escapeRegExp(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function safeModId(modName) {
