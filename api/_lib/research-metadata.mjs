@@ -55,6 +55,7 @@ const SOURCES = {
   fabricGameVersions: 'https://meta.fabricmc.net/v2/versions/game',
   fabricLoaderVersions: 'https://meta.fabricmc.net/v2/versions/loader',
   fabricYarnVersions: version => `https://meta.fabricmc.net/v2/versions/yarn/${encodeURIComponent(version)}`,
+  fabricYarnMetadata: 'https://maven.fabricmc.net/net/fabricmc/yarn/maven-metadata.xml',
   fabricLoaderMetadata: 'https://maven.fabricmc.net/net/fabricmc/fabric-loader/maven-metadata.xml',
   fabricApiMetadata: 'https://maven.fabricmc.net/net/fabricmc/fabric-api/fabric-api/maven-metadata.xml',
   fabricLoomPluginMetadata: 'https://plugins.gradle.org/m2/net/fabricmc/fabric-loom/net.fabricmc.fabric-loom.gradle.plugin/maven-metadata.xml',
@@ -96,6 +97,7 @@ export async function getBuildResearch(loader, version) {
         sources: [
           SOURCES.fabricLoaderVersions,
           SOURCES.fabricYarnVersions(version),
+          SOURCES.fabricYarnMetadata,
           SOURCES.fabricLoaderMetadata,
           SOURCES.fabricApiMetadata,
           SOURCES.fabricLoomPluginMetadata,
@@ -179,11 +181,12 @@ async function fetchNeoForgeVersions() {
 }
 
 async function fetchFabricBuildResearch(version) {
-  const [loaderMetadataXml, apiMetadataXml, loomMetadataXml, yarnEntries, gradleVersions] = await Promise.all([
+  const [loaderMetadataXml, apiMetadataXml, loomMetadataXml, yarnEntries, yarnMetadataXml, gradleVersions] = await Promise.all([
     safeFetchText(SOURCES.fabricLoaderMetadata),
     safeFetchText(SOURCES.fabricApiMetadata),
     safeFetchText(SOURCES.fabricLoomPluginMetadata),
     safeFetchJson(SOURCES.fabricYarnVersions(version)),
+    safeFetchText(SOURCES.fabricYarnMetadata),
     safeFetchJson(SOURCES.gradleVersions),
   ]);
 
@@ -194,7 +197,7 @@ async function fetchFabricBuildResearch(version) {
   const loaderVersion = pickLatestStable(loaderVersions) || FABRIC_BUILD_FALLBACK.loaderVersion;
   const fabricApiVersion = pickLatestFabricApiVersion(apiVersions, version);
   const loomVersion = pickLatestStable(loomVersions) || FABRIC_BUILD_FALLBACK.loomVersion;
-  const yarnVersion = pickLatestYarnVersion(yarnEntries, version);
+  const yarnVersion = pickLatestYarnVersion(yarnEntries, version, parseMavenVersions(yarnMetadataXml));
   const mappingMode = /^26\./.test(String(version || ''))
     ? 'none'
     : (yarnVersion ? 'yarn' : FABRIC_BUILD_FALLBACK.mappingMode);
@@ -342,12 +345,13 @@ function pickLatestFabricApiVersion(versions, minecraftVersion) {
   return matching[0] || null;
 }
 
-function pickLatestYarnVersion(entries, minecraftVersion) {
+function pickLatestYarnVersion(entries, minecraftVersion, metadataVersions = []) {
+  const apiVersions = (entries || [])
+    .filter(entry => entry && typeof entry.version === 'string')
+    .filter(entry => entry.stable !== false)
+    .map(entry => entry.version);
   const versions = uniqueSortedVersions(
-    (entries || [])
-      .filter(entry => entry && typeof entry.version === 'string')
-      .filter(entry => entry.stable !== false)
-      .map(entry => entry.version)
+    [...apiVersions, ...(metadataVersions || [])]
       .filter(version => String(version).startsWith(`${minecraftVersion}+build.`))
       .filter(version => /^\d+\.\d+(?:\.\d+)?\+build\.\d+$/.test(String(version))),
   );
