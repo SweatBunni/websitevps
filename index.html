@@ -958,6 +958,9 @@ When relevant, mention the Minecraft version your code targets.
 For full mod generation, prefer multiple Java source files instead of one giant class.
 Return one fenced java code block per Java file.
 Start each Java code block with a comment like // File: src/main/java/com/example/mod/ExampleClass.java.
+For full buildable project generation, do NOT rely on hidden templates. You must output the actual project files yourself.
+When generating a full mod or plugin, include complete file blocks for build.gradle, settings.gradle, gradle.properties, loader metadata files, and all required Java/resource files.
+Start every generated file block with a first line comment like // File: relative/path.ext, even for Gradle, JSON, TOML, and other non-Java files.
 
 IMPORTANT - TEXTURES: You ALWAYS include complete model JSON files for any item or block you create. Never say you cannot create textures. The build system auto-generates PNG textures using AI image generation. Your job is to output the correct model JSON and reference texture paths properly in code. Always register items and blocks with their full resource location so textures are detected and generated automatically.`
 
@@ -2756,25 +2759,6 @@ function appendBuildLog(progress, title, logText) {
 
 function createGeneratedProject(loader, version, modName, fullText) {
   const files = {};
-  const modId = safeModId(modName);
-
-  // Add scaffold files from build functions
-  files['build.gradle']       = buildGradle(loader, version, modName);
-  files['settings.gradle']    = settingsGradle(loader, version, modName);
-  files['gradle.properties']  = gradleProps(loader, version, modName);
-  files['gradlew']            = gradlewScript();
-  files['gradlew.bat']        = gradlewBatScript();
-  files['gradle/wrapper/gradle-wrapper.properties'] = gradleWrapperProperties(loader, version);
-  files['gradle/wrapper/gradle-wrapper.jar'] = { encoding: 'base64', content: gradleWrapperJarBase64() };
-
-  if (loader === 'fabric') {
-    const ep = `com.example.${modId}.${modName.replace(/\s+/g,'')}`;
-    files['src/main/resources/fabric.mod.json'] = JSON.stringify(fabricModJson(version, modName, [ep]), null, 2);
-  } else if (loader === 'forge') {
-    files['src/main/resources/META-INF/mods.toml'] = forgeModsToml(version, modName);
-  } else if (loader === 'neoforge') {
-    files['src/main/resources/META-INF/mods.toml'] = neoforgeModsToml(version, modName);
-  }
 
   // Parse code blocks from AI response — each block may start with // File: <path>
   const re = /```(?:\w*)\n([\s\S]*?)```/g;
@@ -2806,6 +2790,17 @@ function createGeneratedProject(loader, version, modName, fullText) {
         }
       }
     }
+  }
+
+  // Keep Gradle wrapper infrastructure available even when the model now authors
+  // the project files itself.
+  if (!files['gradlew']) files['gradlew'] = gradlewScript();
+  if (!files['gradlew.bat']) files['gradlew.bat'] = gradlewBatScript();
+  if (!files['gradle/wrapper/gradle-wrapper.properties']) {
+    files['gradle/wrapper/gradle-wrapper.properties'] = gradleWrapperProperties(loader, version);
+  }
+  if (!files['gradle/wrapper/gradle-wrapper.jar']) {
+    files['gradle/wrapper/gradle-wrapper.jar'] = { encoding: 'base64', content: gradleWrapperJarBase64() };
   }
 
   return { files };
