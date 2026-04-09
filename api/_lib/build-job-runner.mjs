@@ -72,6 +72,24 @@ export async function runBuildJobInput(jobId, input) {
       modName: input.modName,
       files: input.files,
       conversation: input.conversation || [],
+      onBuildStart: async ({ attemptNumber }) => {
+        const latest = await getLatestStatus(jobId);
+        await putStatus(jobId, {
+          ...(latest || {}),
+          jobId,
+          status: 'running',
+          loader: input.loader,
+          version: input.version,
+          modName: input.modName,
+          attempts: latest?.attempts || [],
+          createdAt: input.createdAt,
+          startedAt,
+          updatedAt: new Date().toISOString(),
+          buildLogTail: latest?.buildLogTail || '',
+          currentAttempt: attemptNumber,
+          provider: 'vercel',
+        });
+      },
       onAttempt: async ({ attempts }) => {
         const latest = await getLatestStatus(jobId);
         await putStatus(jobId, {

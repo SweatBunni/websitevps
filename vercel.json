@@ -17,7 +17,7 @@
   "functions": {
     "api/chat.mjs": { "maxDuration": 60 },
     "api/build-mod.mjs": { "maxDuration": 60 },
-    "api/build-mod-worker.mjs": { "maxDuration": 300 },
+    "api/build-mod-worker.mjs": { "maxDuration": 800 },
     "api/build-mod-status.mjs": { "maxDuration": 60 },
     "api/build-mod-result.mjs": { "maxDuration": 60 }
   }

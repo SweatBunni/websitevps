@@ -2612,7 +2612,7 @@ async function startBuild(btn, fullText, customModName = '') {
       };
     }
 
-    for (let i = 0; i < 240; i++) {
+    for (let i = 0; i < 1080; i++) {
       await new Promise(r => setTimeout(r, 2500));
       if (workerFailed) return;
       const { response: sr } = await fetchBackend('build-mod-status', {}, `?jobId=${encodeURIComponent(jobId)}`);
@@ -2624,7 +2624,7 @@ async function startBuild(btn, fullText, customModName = '') {
             status = probed;
             break;
           }
-          if (Date.now() - queuedSince < 360000) continue;
+          if (Date.now() - queuedSince < 2700000) continue;
         }
         throw new Error(sj.message || `Status HTTP ${sr.status}`);
       }
@@ -2645,9 +2645,9 @@ async function startBuild(btn, fullText, customModName = '') {
         wkrLine.className = 'build-log-line running';
         wkrLine.querySelector('span:last-child').textContent = 'Gradle is running. Applying AI fixes as needed...';
         const lastUpdate = status.updatedAt ? Date.parse(status.updatedAt) : NaN;
-        if (Number.isFinite(lastUpdate) && Date.now() - lastUpdate > 360000) {
+        if (Number.isFinite(lastUpdate) && Date.now() - lastUpdate > 2700000) {
           wkrLine.className = 'build-log-line error';
-          addLine('Worker stopped reporting progress for 6 minutes.', 'error');
+          addLine('Worker stopped reporting progress for 45 minutes.', 'error');
           return;
         }
       } else {

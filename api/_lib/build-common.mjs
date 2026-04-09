@@ -9,7 +9,7 @@ import { x as tarExtract } from 'tar';
 const MAX_BUILD_ATTEMPTS = 10;
 const MAX_REPAIR_ATTEMPTS_WITHOUT_PROGRESS = 3;
 const MAX_AI_REPAIR_RETRIES = 3;
-const BUILD_TIMEOUT_MS = 14 * 60 * 1000;
+const BUILD_TIMEOUT_MS = 7 * 60 * 1000;   // 7 min per Gradle run — allows multiple attempts within server limit
 const MAX_LOG_CHARS = 32000;
 const MAX_REPAIR_LOG_CHARS = 12000;
 const MAX_REPAIR_FILE_COUNT = 10;
@@ -18,7 +18,7 @@ const JAVA_DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
 const JAVA_EXTRACT_TIMEOUT_MS = 2 * 60 * 1000;
 const javaRuntimeCache = new Map();
 
-export async function executeBuildJob({ apiKey, loader, version, modName, files, conversation, onAttempt }) {
+export async function executeBuildJob({ apiKey, loader, version, modName, files, conversation, onAttempt, onBuildStart }) {
   const projectFiles = sanitizeFiles(files);
   normalizeGeneratedFiles(projectFiles, loader, version);
   const attempts = [];
@@ -29,6 +29,10 @@ export async function executeBuildJob({ apiKey, loader, version, modName, files,
   let previousLogTail = null;
 
   for (let attemptNumber = 1; attemptNumber <= MAX_BUILD_ATTEMPTS; attemptNumber += 1) {
+    // Notify before the build starts so the client knows the worker is alive.
+    if (typeof onBuildStart === 'function') {
+      await onBuildStart({ attemptNumber }).catch(() => {});
+    }
     const buildResult = await runGradleBuild(projectFiles, loader, version);
     const attempt = {
       attempt: attemptNumber,
