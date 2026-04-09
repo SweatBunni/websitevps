@@ -532,6 +532,7 @@ async function requestBuildFix({ apiKey, loader, version, modName, conversation,
           'If a build script is wrong, fix the build script.',
           'If Java imports or APIs are wrong, fix those files.',
           'For Fabric Loom, do not add unsupported loom properties or blocks such as refreshVersions.',
+          'For Fabric Loom, accessWidener must ONLY appear inside loom { accessWidenerPath = file("...") }. Never use bare accessWidener = "..." or accessWidener "..." assignments outside the loom block — they cause "Cannot set the property accessWidener because the backing field is final". If the build log shows this error, move the declaration into the loom block or remove it.',
           'Keep generated Gradle files close to the verified scaffold unless the build log clearly requires a script change.',
           researchedBuild ? `Researched build metadata for this target: ${JSON.stringify(researchedBuild)}` : '',
           formatResearchPromptContext(researchBundle),
@@ -959,10 +960,11 @@ function formatAutonomousResearchContext(bundle) {
 
 function buildRepairGuidance(loader, version) {
   if (loader === 'fabric') {
+    const accessWidenerRule = 'CRITICAL: Never set accessWidener as a bare property assignment (e.g. accessWidener = "file.aw" or accessWidener "file.aw") — this causes "Cannot set the property \'accessWidener\' because the backing field is final". The ONLY correct way to declare an access widener in Fabric Loom is inside the loom block: loom { accessWidenerPath = file("src/main/resources/mod.accesswidener") }. If the mod does not need an access widener, remove the declaration entirely.';
     if (isFabricNonObfuscatedVersion(version)) {
-      return 'For Fabric 26.x targets, assume the environment is non-obfuscated. Do not add mappings dependencies, and do not use old Yarn-era remap assumptions. NEVER use Yarn-style package guesses like net.minecraft.block.*, net.minecraft.registry.*, or net.minecraft.util.Identifier unless you have verified they exist for this exact 26.x target. If the generated code uses those imports, replace them with the current 26.x official names or simplify the scaffold to code you know is valid. For blocks and block items, set registryKey(...) on AbstractBlock.Settings and Item.Settings before constructing the instances.';
+      return `For Fabric 26.x targets, assume the environment is non-obfuscated. Do not add mappings dependencies, and do not use old Yarn-era remap assumptions. NEVER use Yarn-style package guesses like net.minecraft.block.*, net.minecraft.registry.*, or net.minecraft.util.Identifier unless you have verified they exist for this exact 26.x target. If the generated code uses those imports, replace them with the current 26.x official names or simplify the scaffold to code you know is valid. For blocks and block items, set registryKey(...) on AbstractBlock.Settings and Item.Settings before constructing the instances. ${accessWidenerRule}`;
     }
-    return `For this Fabric target, assume the project uses Yarn mappings. Prefer Yarn-style Minecraft imports, use Identifier.of(namespace, path) instead of new Identifier(...), and prefer Item.Settings and AbstractBlock.Settings.copy(...) over outdated FabricItemSettings or FabricBlockSettings helpers.${usesModernFabricRegistryKeys(version) ? ' For modern Fabric block and block-item registration, set registryKey(...) on AbstractBlock.Settings and Item.Settings before constructing the instances.' : ''}`;
+    return `For this Fabric target, assume the project uses Yarn mappings. Prefer Yarn-style Minecraft imports, use Identifier.of(namespace, path) instead of new Identifier(...), and prefer Item.Settings and AbstractBlock.Settings.copy(...) over outdated FabricItemSettings or FabricBlockSettings helpers.${usesModernFabricRegistryKeys(version) ? ' For modern Fabric block and block-item registration, set registryKey(...) on AbstractBlock.Settings and Item.Settings before constructing the instances.' : ''} ${accessWidenerRule}`;
   }
   if (loader === 'forge') {
     const isModern = isModernForgeVersion(version);
@@ -1079,6 +1081,13 @@ function stripUnsupportedFabricLoomSettings(content, version) {
   next = next.replace(/^\s*loom\.refreshVersions\s*=\s*.*(?:\r?\n|$)/gm, '');
   next = next.replace(/^\s*refreshVersions\s*\(.*\)\s*(?:\r?\n|$)/gm, '');
   next = next.replace(/loom\s*\{\s*\}/g, '');
+  // Remove bare `accessWidener = "..."` assignments outside of a loom{} block.
+  // These cause "Cannot set the property 'accessWidener' because the backing field is final".
+  // The correct declaration is inside loom { accessWidenerPath = file("...") }.
+  next = next.replace(/^\s*accessWidener\s*=\s*['"][^'"]*['"]\s*(?:\r?\n|$)/gm, '');
+  // Also fix the case where the AI puts `accessWidener "path"` as a bare statement outside loom{}.
+  // Detect it: not inside a loom block — we strip it globally and let the loom block handle it.
+  next = next.replace(/^\s*accessWidener\s+['"][^'"]*['"]\s*(?:\r?\n|$)/gm, '');
   if (isFabricNonObfuscatedVersion(version)) {
     next = next.replace(/^\s*mappings\s+loom\.officialMojangMappings\(\)\s*(?:\r?\n|$)/gm, '');
     next = next.replace(/^\s*mappings\s+"net\.fabricmc:yarn:[^"\r\n]+"\s*(?:\r?\n|$)/gm, '');
