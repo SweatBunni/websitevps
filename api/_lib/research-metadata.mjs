@@ -1,4 +1,7 @@
 const CACHE_TTL_MS = 30 * 60 * 1000;
+const DEEP_RESEARCH_BUDGET_MS = 115 * 1000;
+const RESEARCH_REQUEST_TIMEOUT_MS = 12 * 1000;
+const MAX_RESEARCH_SNIPPET_CHARS = 1200;
 const cache = new Map();
 
 const FALLBACK_VERSIONS = {
@@ -77,6 +80,69 @@ const SOURCES = {
   gradleVersions: 'https://services.gradle.org/versions/all',
 };
 
+const OFFICIAL_DOC_SOURCES = {
+  fabric: [
+    {
+      key: 'fabricDocsSetup',
+      url: 'https://docs.fabricmc.net/develop/getting-started/setting-up-a-development-environment',
+      kind: 'text',
+      title: 'Fabric docs: setup',
+    },
+    {
+      key: 'fabricDocsBlocks',
+      url: 'https://docs.fabricmc.net/develop/blocks/first-block',
+      kind: 'text',
+      title: 'Fabric docs: blocks',
+    },
+    {
+      key: 'fabricDocsItems',
+      url: 'https://docs.fabricmc.net/develop/items/first-item',
+      kind: 'text',
+      title: 'Fabric docs: items',
+    },
+  ],
+  forge: [
+    {
+      key: 'forgeDocsGettingStarted',
+      url: 'https://docs.minecraftforge.net/en/latest/gettingstarted/',
+      kind: 'text',
+      title: 'Forge docs: getting started',
+    },
+    {
+      key: 'forgeDocsBlocks',
+      url: 'https://docs.minecraftforge.net/en/latest/blocks/',
+      kind: 'text',
+      title: 'Forge docs: blocks',
+    },
+    {
+      key: 'forgeDocsEvents',
+      url: 'https://docs.minecraftforge.net/en/latest/concepts/events/',
+      kind: 'text',
+      title: 'Forge docs: events',
+    },
+  ],
+  neoforge: [
+    {
+      key: 'neoforgeDocsGettingStarted',
+      url: 'https://docs.neoforged.net/docs/gettingstarted/',
+      kind: 'text',
+      title: 'NeoForge docs: getting started',
+    },
+    {
+      key: 'neoforgeDocsBlocks',
+      url: 'https://docs.neoforged.net/docs/blocks/',
+      kind: 'text',
+      title: 'NeoForge docs: blocks',
+    },
+    {
+      key: 'neoforgeDocsEvents',
+      url: 'https://docs.neoforged.net/docs/concepts/events/',
+      kind: 'text',
+      title: 'NeoForge docs: events',
+    },
+  ],
+};
+
 export async function getLoaderVersions(loader) {
   return withCache(`loader-versions:${loader}`, async () => {
     if (loader === 'fabric') {
@@ -143,6 +209,33 @@ export async function getBuildResearch(loader, version) {
       };
     }
     return { loader, version, build: null, sources: [] };
+  });
+}
+
+export async function getDeepBuildResearch(loader, version, options = {}) {
+  const timeBudgetMs = Number(options.timeBudgetMs) > 0
+    ? Number(options.timeBudgetMs)
+    : DEEP_RESEARCH_BUDGET_MS;
+  const cacheKey = `deep-build:${loader}:${version}:${timeBudgetMs}`;
+  return withCache(cacheKey, async () => {
+    const startedAt = Date.now();
+    const baseResearch = await getBuildResearch(loader, version);
+    const coreSources = buildCoreResearchSources(loader, version);
+    const docSources = OFFICIAL_DOC_SOURCES[loader] || [];
+    const allSources = [...coreSources, ...docSources];
+    const evidence = await fetchDeepResearchEvidence(allSources, timeBudgetMs);
+    const completedAt = Date.now();
+    return {
+      loader,
+      version,
+      build: baseResearch?.build || null,
+      sources: [...new Set([...(baseResearch?.sources || []), ...allSources.map(source => source.url)])],
+      evidence,
+      researchWindowMs: timeBudgetMs,
+      completedInMs: completedAt - startedAt,
+      completedAt: new Date(completedAt).toISOString(),
+      summary: summarizeResearch(loader, version, baseResearch?.build, evidence, completedAt - startedAt),
+    };
   });
 }
 
@@ -277,6 +370,136 @@ async function fetchNeoForgeBuildResearch(version) {
     gradleVersion,
     loaderVersion: '[1,)',
   };
+}
+
+function buildCoreResearchSources(loader, version) {
+  if (loader === 'fabric') {
+    return [
+      { key: 'fabricLoaderVersions', url: SOURCES.fabricLoaderVersions, kind: 'json', title: 'Fabric Meta loader versions' },
+      { key: 'fabricLoaderMetadata', url: SOURCES.fabricLoaderMetadata, kind: 'xml', title: 'Fabric loader Maven metadata' },
+      { key: 'fabricYarnVersions', url: SOURCES.fabricYarnVersions(version), kind: 'json', title: 'Fabric Meta Yarn versions' },
+      { key: 'fabricYarnMetadata', url: SOURCES.fabricYarnMetadata, kind: 'xml', title: 'Fabric Yarn Maven metadata' },
+      { key: 'fabricApiMetadata', url: SOURCES.fabricApiMetadata, kind: 'xml', title: 'Fabric API Maven metadata' },
+      { key: 'fabricLoomPluginMetadata', url: SOURCES.fabricLoomPluginMetadata, kind: 'xml', title: 'Fabric Loom plugin metadata' },
+      { key: 'gradleVersions', url: SOURCES.gradleVersions, kind: 'json', title: 'Gradle versions' },
+    ];
+  }
+  if (loader === 'forge') {
+    return [
+      { key: 'forgePromotions', url: SOURCES.forgePromotions, kind: 'json', title: 'Forge promotions' },
+      { key: 'forgeMetadata', url: SOURCES.forgeMetadata, kind: 'xml', title: 'Forge Maven metadata' },
+      { key: 'forgeGradlePluginMetadata', url: SOURCES.forgeGradlePluginMetadata, kind: 'xml', title: 'ForgeGradle plugin metadata' },
+      { key: 'foojayResolverMetadata', url: SOURCES.foojayResolverMetadata, kind: 'xml', title: 'Foojay resolver metadata' },
+      { key: 'gradleVersions', url: SOURCES.gradleVersions, kind: 'json', title: 'Gradle versions' },
+    ];
+  }
+  if (loader === 'neoforge') {
+    return [
+      { key: 'neoforgeMetadata', url: SOURCES.neoforgeMetadata, kind: 'xml', title: 'NeoForge Maven metadata' },
+      { key: 'neoforgeUserdevMetadata', url: SOURCES.neoforgeUserdevMetadata, kind: 'xml', title: 'NeoForge userdev plugin metadata' },
+      { key: 'gradleVersions', url: SOURCES.gradleVersions, kind: 'json', title: 'Gradle versions' },
+    ];
+  }
+  return [];
+}
+
+async function fetchDeepResearchEvidence(sources, timeBudgetMs) {
+  const deadline = Date.now() + Math.max(1000, timeBudgetMs);
+  const tasks = (sources || []).map(source => fetchResearchSource(source, deadline));
+  const settled = await Promise.allSettled(tasks);
+  return settled
+    .map(result => result.status === 'fulfilled' ? result.value : null)
+    .filter(Boolean);
+}
+
+async function fetchResearchSource(source, deadlineMs) {
+  const remainingMs = deadlineMs - Date.now();
+  if (remainingMs <= 250) {
+    return {
+      url: source.url,
+      title: source.title || source.url,
+      kind: source.kind || 'text',
+      status: 'skipped',
+      snippet: '',
+    };
+  }
+
+  const timeoutMs = Math.min(RESEARCH_REQUEST_TIMEOUT_MS, remainingMs);
+  try {
+    const text = await fetchTextWithTimeout(source.url, timeoutMs, source.kind === 'json' ? 'application/json' : 'text/html,application/xml,text/xml,text/plain,*/*');
+    return {
+      url: source.url,
+      title: source.title || source.url,
+      kind: source.kind || 'text',
+      status: 'ok',
+      snippet: summarizeFetchedText(text, source.kind),
+    };
+  } catch (error) {
+    return {
+      url: source.url,
+      title: source.title || source.url,
+      kind: source.kind || 'text',
+      status: 'error',
+      snippet: String(error?.message || 'Fetch failed.'),
+    };
+  }
+}
+
+async function fetchTextWithTimeout(url, timeoutMs, acceptHeader) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      headers: { Accept: acceptHeader },
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    return response.text();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function summarizeFetchedText(text, kind) {
+  const raw = String(text || '').trim();
+  if (!raw) return '';
+  if (kind === 'json') {
+    try {
+      const parsed = JSON.parse(raw);
+      return limitSnippet(JSON.stringify(parsed).replace(/\s+/g, ' '));
+    } catch {
+      return limitSnippet(raw.replace(/\s+/g, ' '));
+    }
+  }
+  if (kind === 'xml') {
+    return limitSnippet(raw.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' '));
+  }
+  return limitSnippet(
+    raw
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' '),
+  );
+}
+
+function limitSnippet(text) {
+  return String(text || '').slice(0, MAX_RESEARCH_SNIPPET_CHARS);
+}
+
+function summarizeResearch(loader, version, build, evidence, completedInMs) {
+  const successful = (evidence || []).filter(item => item.status === 'ok');
+  const scanned = successful.length;
+  const buildBits = [];
+  if (build?.gradleVersion) buildBits.push(`Gradle ${build.gradleVersion}`);
+  if (build?.loomVersion) buildBits.push(`Loom ${build.loomVersion}`);
+  if (build?.loaderVersion) buildBits.push(`loader ${build.loaderVersion}`);
+  if (build?.yarnVersion) buildBits.push(`Yarn ${build.yarnVersion}`);
+  if (build?.forgeVersion) buildBits.push(`Forge ${build.forgeVersion}`);
+  if (build?.neoforgeVersion) buildBits.push(`NeoForge ${build.neoforgeVersion}`);
+  return `Deep research scanned ${scanned} official ${loader} sources for ${version} in ${Math.max(1, Math.round(completedInMs / 1000))}s.${buildBits.length ? ` Key versions: ${buildBits.join(', ')}.` : ''}`;
 }
 
 async function withCache(key, factory) {

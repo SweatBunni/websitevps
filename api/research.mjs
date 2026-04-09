@@ -1,4 +1,4 @@
-import { getBuildResearch, getLoaderVersions } from './_lib/research-metadata.mjs';
+import { getBuildResearch, getDeepBuildResearch, getLoaderVersions } from './_lib/research-metadata.mjs';
 
 function json(body, status = 200) {
   return Response.json(body, {
@@ -37,7 +37,10 @@ export default async function handler(request) {
       if (!loader || !version) {
         return json({ message: 'loader and version are required for build research.' }, 400);
       }
-      const result = await getBuildResearch(loader, version);
+      const deep = url.searchParams.get('deep');
+      const result = deep === '1'
+        ? await getDeepBuildResearch(loader, version)
+        : await getBuildResearch(loader, version);
       return json(result);
     }
 

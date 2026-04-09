@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { x as tarExtract } from 'tar';
-import { getBuildResearch } from './research-metadata.mjs';
+import { getBuildResearch, getDeepBuildResearch } from './research-metadata.mjs';
 import { rememberBuildOutcome, retrieveRelevantMemories } from './site-memory.mjs';
 
 const MAX_BUILD_ATTEMPTS = 6;
@@ -20,15 +20,18 @@ const JAVA_DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
 const JAVA_EXTRACT_TIMEOUT_MS = 2 * 60 * 1000;
 const javaRuntimeCache = new Map();
 
-export async function executeBuildJob({ apiKey, loader, version, modName, files, conversation, onAttempt, onBuildStart, onActivity }) {
+export async function executeBuildJob({ apiKey, loader, version, modName, files, conversation, onAttempt, onBuildStart, onActivity, researchBundle: preloadedResearch = null }) {
   const projectFiles = sanitizeFiles(files);
-  const researchedBuild = await loadBuildResearch(loader, version);
+  const researchBundle = await loadBuildResearchBundle(loader, version, preloadedResearch);
+  const researchedBuild = researchBundle?.build || null;
   if (typeof onActivity === 'function') {
     await onActivity({
-      message: researchedBuild
+      message: researchBundle?.summary
+        ? researchBundle.summary
+        : researchedBuild
         ? `Researched official build metadata for ${loader} ${version}.`
         : `Fell back to local build defaults for ${loader} ${version}.`,
-      buildResearch: researchedBuild,
+      buildResearch: researchBundle || researchedBuild,
     }).catch(() => {});
   }
   await normalizeGeneratedFiles(projectFiles, loader, version, researchedBuild);
@@ -121,7 +124,7 @@ export async function executeBuildJob({ apiKey, loader, version, modName, files,
       if (typeof onActivity === 'function') {
         await onActivity({
           message: `Researching the build failure and asking the AI to repair attempt ${attemptNumber}.`,
-          buildResearch: researchedBuild,
+          buildResearch: researchBundle || researchedBuild,
         }).catch(() => {});
       }
       repair = await requestBuildFix({
@@ -137,6 +140,7 @@ export async function executeBuildJob({ apiKey, loader, version, modName, files,
         previousSummary: attempts.length > 1 ? (attempts[attempts.length - 2].fixSummary || '') : '',
         previousAttempts: attempts.slice(0, -1),
         researchedBuild,
+        researchBundle,
         failureSignature: attempt.failureSignature,
       });
     } catch (error) {
@@ -180,7 +184,7 @@ export async function executeBuildJob({ apiKey, loader, version, modName, files,
         message: changedFiles.length
           ? `${attempt.fixSummary} (${changedFiles.length} file${changedFiles.length === 1 ? '' : 's'} changed).`
           : `AI repair produced no file changes on attempt ${attemptNumber}.`,
-        buildResearch: researchedBuild,
+        buildResearch: researchBundle || researchedBuild,
       }).catch(() => {});
     }
     await notifyAttempt(onAttempt, attempts, projectFiles);
@@ -473,7 +477,7 @@ function isRetryableAiStatus(status) {
   return status === 429 || status === 503 || status === 502 || status === 504;
 }
 
-async function requestBuildFix({ apiKey, loader, version, modName, conversation, files, buildLog, attemptNumber, requireConcreteChanges = false, previousSummary = '', previousAttempts = [], researchedBuild = null, failureSignature = '' }) {
+async function requestBuildFix({ apiKey, loader, version, modName, conversation, files, buildLog, attemptNumber, requireConcreteChanges = false, previousSummary = '', previousAttempts = [], researchedBuild = null, researchBundle = null, failureSignature = '' }) {
   const repairFiles = collectRepairFiles(files, buildLog).map(({ path: filePath, content }) => ({
     path: filePath,
     content: truncateRepairFileContent(content, filePath),
@@ -515,6 +519,7 @@ async function requestBuildFix({ apiKey, loader, version, modName, conversation,
           'For Fabric Loom, do not add unsupported loom properties or blocks such as refreshVersions.',
           'Keep generated Gradle files close to the verified scaffold unless the build log clearly requires a script change.',
           researchedBuild ? `Researched build metadata for this target: ${JSON.stringify(researchedBuild)}` : '',
+          formatResearchPromptContext(researchBundle),
           relevantMemories.length ? `Relevant prior site memory:\n${relevantMemories.map(memory => `- ${memory.text}`).join('\n')}` : '',
           buildRepairGuidance(loader, version),
           requireConcreteChanges
@@ -792,7 +797,7 @@ async function normalizeGeneratedFiles(files, loader, version, researchedBuild =
   }
   if (loader === 'fabric' && files['gradle.properties']) {
     const normalized = normalizeFileData(files['gradle.properties']);
-    const cleaned = normalizeFabricGradleProperties(normalized.content, resolvedBuild, needsFabricApi);
+    const cleaned = normalizeFabricGradleProperties(normalized.content, version, resolvedBuild, needsFabricApi);
     if (cleaned !== normalized.content) {
       files['gradle.properties'] = { encoding: 'utf8', content: cleaned };
       changedFiles.push('gradle.properties');
@@ -859,6 +864,30 @@ async function loadBuildResearch(loader, version) {
   } catch {
     return null;
   }
+}
+
+async function loadBuildResearchBundle(loader, version, preloadedResearch = null) {
+  if (preloadedResearch && typeof preloadedResearch === 'object') {
+    return preloadedResearch;
+  }
+  try {
+    return await getDeepBuildResearch(loader, version, { timeBudgetMs: 115000 });
+  } catch {
+    const build = await loadBuildResearch(loader, version);
+    return build ? { loader, version, build, sources: [], evidence: [], summary: '' } : null;
+  }
+}
+
+function formatResearchPromptContext(researchBundle) {
+  if (!researchBundle || !Array.isArray(researchBundle.evidence) || !researchBundle.evidence.length) {
+    return '';
+  }
+  const successful = researchBundle.evidence
+    .filter(entry => entry && entry.status === 'ok' && entry.snippet)
+    .slice(0, 6)
+    .map(entry => `- ${entry.title || entry.url}: ${entry.snippet}`);
+  if (!successful.length) return '';
+  return `Official research bundle for this target:\n${successful.join('\n')}\nUse these official-source hints when fixing loader/version-specific APIs, mappings, plugins, and dependencies.`;
 }
 
 function buildRepairGuidance(loader, version) {
@@ -1053,8 +1082,18 @@ function getFabricYarnFallback(version) {
   return null;
 }
 
-function normalizeFabricGradleProperties(content, researchedBuild = null, needsFabricApi = false) {
+function normalizeFabricGradleProperties(content, version, researchedBuild = null, needsFabricApi = false) {
   let next = String(content || '');
+  next = next.replace(/^\s*yarn_mappings=.*(?:\r?\n|$)/gm, '');
+  if (!isFabricNonObfuscatedVersion(version)) {
+    const validYarn = isValidYarnVersion(researchedBuild?.yarnVersion)
+      ? researchedBuild.yarnVersion
+      : getFabricYarnFallback(version);
+    if (validYarn) {
+      const suffix = next.endsWith('\n') ? '' : '\n';
+      next = `${next}${suffix}yarn_mappings=${validYarn}\n`;
+    }
+  }
   next = next.replace(/^\s*fabric_version=.*(?:\r?\n|$)/gm, '');
   if (needsFabricApi && researchedBuild?.fabricApiVersion) {
     const suffix = next.endsWith('\n') ? '' : '\n';

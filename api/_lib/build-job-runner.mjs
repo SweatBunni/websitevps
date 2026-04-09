@@ -1,6 +1,7 @@
 import { executeBuildJob } from './build-common.mjs';
 import { getJson, getLatestStatus, putBytes, putJson, putStatus, putText } from './build-store.mjs';
 import { enrichProjectWithGeneratedTextures } from './texture-generation.mjs';
+import { getDeepBuildResearch } from './research-metadata.mjs';
 
 export async function runStoredBuildJob(jobId) {
   const input = await getJsonWithRetry(jobId, 'input.json');
@@ -38,6 +39,40 @@ export async function runBuildJobInput(jobId, input) {
   });
 
   try {
+    const latestBeforeResearch = await getLatestStatus(jobId);
+    await putStatus(jobId, {
+      ...(latestBeforeResearch || {}),
+      jobId,
+      status: 'running',
+      loader: input.loader,
+      version: input.version,
+      modName: input.modName,
+      attempts: existing?.attempts || [],
+      createdAt: input.createdAt,
+      startedAt,
+      updatedAt: new Date().toISOString(),
+      activityLog: appendActivity(latestBeforeResearch?.activityLog, `Starting deep official-source research for ${input.loader} ${input.version}.`),
+      provider: 'vercel',
+    });
+
+    const researchBundle = await getDeepBuildResearch(input.loader, input.version, { timeBudgetMs: 115000 });
+    const latestAfterResearch = await getLatestStatus(jobId);
+    await putStatus(jobId, {
+      ...(latestAfterResearch || {}),
+      jobId,
+      status: 'running',
+      loader: input.loader,
+      version: input.version,
+      modName: input.modName,
+      attempts: existing?.attempts || [],
+      createdAt: input.createdAt,
+      startedAt,
+      updatedAt: new Date().toISOString(),
+      buildResearch: researchBundle,
+      activityLog: appendActivity(latestAfterResearch?.activityLog, researchBundle?.summary || `Completed deep official-source research for ${input.loader} ${input.version}.`),
+      provider: 'vercel',
+    });
+
     const textureResult = await enrichProjectWithGeneratedTextures({
       apiKey: process.env.MISTRAL_API_KEY,
       loader: input.loader,
@@ -79,6 +114,7 @@ export async function runBuildJobInput(jobId, input) {
       modName: input.modName,
       files: input.files,
       conversation: input.conversation || [],
+      researchBundle,
       onActivity: async ({ message, buildResearch }) => {
         const latest = await getLatestStatus(jobId);
         await putStatus(jobId, {
