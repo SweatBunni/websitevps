@@ -482,6 +482,19 @@ html, body {
   border-bottom: 1px solid var(--border);
 }
 #typing.visible { display: flex; align-items: center; gap: 8px; }
+.typing-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  width: 100%;
+}
+.typing-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
 .typing-label { font-size: 10px; color: var(--text3); letter-spacing: 1px; text-transform: uppercase; }
 .typing-dots { display: flex; gap: 4px; }
 .typing-dot {
@@ -493,6 +506,41 @@ html, body {
 .typing-dot:nth-child(2) { animation-delay: 0.2s; }
 .typing-dot:nth-child(3) { animation-delay: 0.4s; }
 @keyframes pulse { 0%,100% { opacity: 0.3; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1.1); } }
+.chat-activity-console {
+  background: rgba(0,0,0,0.16);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  width: min(100%, 560px);
+}
+.chat-activity-head {
+  padding: 7px 10px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text3);
+  border-bottom: 1px solid var(--border);
+  background: rgba(255,255,255,0.02);
+}
+.chat-activity-log {
+  max-height: 120px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text2);
+  scrollbar-width: thin;
+}
+.chat-activity-line {
+  line-height: 1.45;
+  word-break: break-word;
+}
+.chat-activity-line strong {
+  color: var(--amber2);
+  margin-right: 6px;
+}
 
 /* build prompt */
 .build-prompt {
@@ -547,6 +595,7 @@ html, body {
 }
 .build-progress-title { font-size: 11px; color: var(--text2); margin-bottom: 10px; }
 .build-progress-title strong { color: var(--text); }
+.build-source-note { font-size: 10px; color: var(--amber); margin: -2px 0 10px; }
 .build-log { display: flex; flex-direction: column; gap: 5px; }
 .build-log-line {
   display: flex;
@@ -563,6 +612,40 @@ html, body {
 .build-log-line.done span:last-child { color: var(--text2); }
 .build-log-line.running span:last-child { color: var(--amber2); }
 .build-log-line.error span:last-child { color: var(--red); }
+.build-activity-console {
+  margin-top: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.build-activity-head {
+  padding: 7px 10px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  font-size: 10px;
+  color: var(--amber);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+.build-activity-log {
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11px;
+}
+.build-activity-line {
+  color: var(--text2);
+  line-height: 1.45;
+}
+.build-activity-line strong {
+  color: var(--amber2);
+  font-weight: 600;
+}
 
 .build-download-btn {
   display: inline-flex;
@@ -806,12 +889,18 @@ details pre {
       <div id="messages">
         <div id="typing" class="hidden">
           <div class="msg-gutter"><div class="msg-avatar ai">⛏</div></div>
-          <div style="padding:14px 0;display:flex;align-items:center;gap:8px;">
+          <div class="typing-body">
+            <div class="typing-head">
             <span class="typing-label">Generating</span>
             <div class="typing-dots">
               <div class="typing-dot"></div>
               <div class="typing-dot"></div>
               <div class="typing-dot"></div>
+            </div>
+            </div>
+            <div class="chat-activity-console">
+              <div class="chat-activity-head">Live Chat Activity</div>
+              <div id="chat-activity-log" class="chat-activity-log"></div>
             </div>
           </div>
         </div>
@@ -928,6 +1017,7 @@ let state = {
   chats: storedChats,
   currentId: storedChats.length ? storedChats[storedChats.length - 1].id : null,
   isStreaming: false,
+  chatActivityLog: [],
   sidebarOpen: true,
   desktopSidebarOpen: true,
   isMobileLayout: false,
@@ -941,29 +1031,9 @@ let backendProvider = null;
 
 // ── INIT ──
 // ── LOADER / VERSION ──
-const FABRIC_VERSIONS = [
-  '1.21.11','1.21.10','1.21.4','1.21.3','1.21.2','1.21.1','1.21',
-  '1.20.6','1.20.4','1.20.2','1.20.1',
-  '1.19.4','1.19.3','1.19.2','1.19.1','1.19',
-  '1.18.2','1.18.1','1.18',
-  '1.17.1',
-  '1.16.5','1.16.4','1.16.3','1.16.2','1.16.1',
-];
-const FORGE_VERSIONS  = [
-  '1.21.11','1.21.10','1.21.4','1.21.3','1.21.2','1.21.1','1.21',
-  '1.20.6','1.20.4','1.20.2','1.20.1',
-  '1.19.4','1.19.3','1.19.2','1.19.1','1.19',
-  '1.18.2','1.18.1','1.18',
-  '1.17.1',
-  '1.16.5','1.16.4','1.16.3','1.16.2','1.16.1',
-  '1.15.2','1.15.1','1.15',
-  '1.14.4',
-  '1.12.2',
-];
-const NEO_VERSIONS    = [
-  '1.21.11','1.21.10','1.21.4','1.21.3','1.21.2','1.21.1','1.21',
-  '1.20.6','1.20.4','1.20.2','1.20.1',
-];
+const FABRIC_VERSIONS = [];
+const FORGE_VERSIONS  = [];
+const NEO_VERSIONS    = [];
 const SPIGOT_VERSIONS = [
   '1.21.11','1.21.10','1.21.4','1.21.3','1.21.2','1.21.1','1.21',
   '1.20.6','1.20.4','1.20.2','1.20.1',
@@ -981,6 +1051,7 @@ const PAPER_VERSIONS  = SPIGOT_VERSIONS;
 const BUILD_RESEARCH_PROMISES = new Map();
 const RESEARCHED_FABRIC_BUILD_DATA = {};
 const RESEARCHED_FORGE_BUILD_DATA = {};
+const RESEARCHED_NEOFORGE_BUILD_DATA = {};
 
 function replaceArrayContents(target, values) {
   target.splice(0, target.length, ...(Array.isArray(values) ? values : []));
@@ -997,12 +1068,19 @@ async function loadDynamicLoaderVersions() {
     if (Array.isArray(payload?.versions?.forge) && payload.versions.forge.length) {
       replaceArrayContents(FORGE_VERSIONS, payload.versions.forge);
     }
+    if (Array.isArray(payload?.versions?.neoforge) && payload.versions.neoforge.length) {
+      replaceArrayContents(NEO_VERSIONS, payload.versions.neoforge);
+    }
   } catch {}
 }
 
 async function ensureBuildResearch(loader, version) {
-  if (loader !== 'fabric' && loader !== 'forge') return null;
-  const bucket = loader === 'fabric' ? RESEARCHED_FABRIC_BUILD_DATA : RESEARCHED_FORGE_BUILD_DATA;
+  if (loader !== 'fabric' && loader !== 'forge' && loader !== 'neoforge') return null;
+  const bucket = loader === 'fabric'
+    ? RESEARCHED_FABRIC_BUILD_DATA
+    : loader === 'forge'
+      ? RESEARCHED_FORGE_BUILD_DATA
+      : RESEARCHED_NEOFORGE_BUILD_DATA;
   if (bucket[version]) return bucket[version];
 
   const key = `${loader}:${version}`;
@@ -1042,7 +1120,6 @@ function onLoaderChange() {
 
 window.addEventListener('DOMContentLoaded', async () => {
   syncResponsiveLayout(true);
-  onLoaderChange();
   await loadDynamicLoaderVersions();
   onLoaderChange();
   renderChatList();
@@ -1319,7 +1396,8 @@ function showWelcome(show = true) { document.getElementById('welcome').style.dis
 function resetMessages() {
   const m = document.getElementById('messages');
   m.querySelectorAll('.msg').forEach(el => el.remove());
-  document.getElementById('typing').classList.add('hidden');
+  setTypingVisible(false);
+  clearChatActivity();
 }
 function scrollToBottom() {
   const w = document.getElementById('messages-wrap');
@@ -1333,6 +1411,49 @@ function sendStarter(el) {
 }
 function escapeHtml(t) {
   return String(t||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function setTypingVisible(visible) {
+  const typing = document.getElementById('typing');
+  if (!typing) return;
+  typing.classList.toggle('hidden', !visible);
+  typing.classList.toggle('visible', !!visible);
+}
+
+function renderChatActivity(entries = []) {
+  const logEl = document.getElementById('chat-activity-log');
+  if (!logEl) return;
+  logEl.innerHTML = '';
+  const list = Array.isArray(entries) ? entries.slice(-12) : [];
+  if (!list.length) {
+    logEl.innerHTML = '<div class="chat-activity-line">Waiting for activity...</div>';
+    return;
+  }
+  list.forEach(entry => {
+    const line = document.createElement('div');
+    line.className = 'chat-activity-line';
+    const time = entry?.time ? new Date(entry.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '--:--:--';
+    line.innerHTML = `<strong>${escapeHtml(time)}</strong> ${escapeHtml(entry?.message || '')}`;
+    logEl.appendChild(line);
+  });
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function clearChatActivity() {
+  state.chatActivityLog = [];
+  renderChatActivity([]);
+}
+
+function addChatActivity(message) {
+  if (!message) return;
+  const next = Array.isArray(state.chatActivityLog) ? state.chatActivityLog.slice(-11) : [];
+  next.push({
+    time: new Date().toISOString(),
+    message: String(message),
+  });
+  state.chatActivityLog = next;
+  renderChatActivity(next);
+  scrollToBottom();
 }
 
 // ── RENDER ──
@@ -1429,8 +1550,13 @@ async function sendMessage() {
   }
   updateUrlHash(chat.id);
 
-  const typing = document.getElementById('typing');
-  typing.classList.remove('hidden');
+  clearChatActivity();
+  setTypingVisible(true);
+  addChatActivity(`Captured your ${loader} ${version} request.`);
+  addChatActivity('Researching official version metadata for this target.');
+  await ensureBuildResearch(loader, version);
+  addChatActivity('Prepared researched build metadata and target context.');
+  addChatActivity('Sending the request to the AI model.');
   scrollToBottom();
 
   try {
@@ -1447,18 +1573,19 @@ async function sendMessage() {
     });
 
     if (!response.ok) {
-      typing.classList.add('hidden');
+      setTypingVisible(false);
       const err = await response.json().catch(() => ({}));
       appendMessage('ai', `**Error:** ${err.message || `HTTP ${response.status}`}`);
       throw new Error('non-ok response');
     }
 
-    typing.classList.add('hidden');
+    addChatActivity('Connected to the AI stream. Waiting for the first tokens.');
 
     // Read SSE stream
     const reader = response.body.getReader();
     const dec = new TextDecoder();
     let buf = '', fullText = '', contentEl = null;
+    let announcedStreaming = false;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -1473,6 +1600,10 @@ async function sendMessage() {
           const evt = JSON.parse(t.slice(5).trim());
           if (evt.error) throw new Error(evt.error);
           if (evt.delta) {
+            if (!announcedStreaming) {
+              announcedStreaming = true;
+              addChatActivity('Streaming researched response back into the chat.');
+            }
             fullText += evt.delta;
             if (!contentEl) {
               contentEl = appendMessage('ai', fullText);
@@ -1491,6 +1622,8 @@ async function sendMessage() {
     }
 
     if (!contentEl) contentEl = appendMessage('ai', fullText || '(no response)');
+    addChatActivity('Response complete. Saving the conversation.');
+    setTypingVisible(false);
 
     chat.messages.push({ role: 'assistant', content: fullText });
     saveChats();
@@ -1500,7 +1633,8 @@ async function sendMessage() {
     }
 
   } catch (err) {
-    typing.classList.add('hidden');
+    addChatActivity(`Chat request failed: ${err.message || 'unknown error'}`);
+    setTypingVisible(false);
     if (err.message !== 'non-ok response') appendMessage('ai', `**Error:** ${err.message}`);
   }
 
@@ -1555,74 +1689,28 @@ function extractCodeBlocks(text) {
   return blocks;
 }
 
-const VERIFIED_FABRIC_BUILD_DATA = {
-  default: {
-    loomVersion: '1.14.10',
-    loaderVersion: '0.18.2',
-    fabricApiVersion: null,
-    mappingMode: 'official',
-    yarnVersion: null,
-  },
-  '1.21': {
-    fabricApiVersion: '0.102.0+1.21',
-    mappingMode: 'yarn',
-    yarnVersion: '1.21+build.9',
-  },
-  '1.21.1': {
-    fabricApiVersion: '0.116.9+1.21.1',
-    mappingMode: 'yarn',
-    yarnVersion: '1.21.1+build.1',
-  },
-  '1.21.11': {
-    fabricApiVersion: '0.141.3+1.21.11',
-    mappingMode: 'yarn',
-    yarnVersion: '1.21.11+build.3',
-  },
-  '1.21.4': {
-    fabricApiVersion: '0.119.4+1.21.4',
-    mappingMode: 'yarn',
-    yarnVersion: '1.21.4+build.4',
-  },
-  '26.1': {
-    mappingMode: 'none',
-  },
-  '26.1.1': {
-    mappingMode: 'none',
-  },
+const DEFAULT_FABRIC_BUILD_DATA = {
+  loomVersion: '1.14.10',
+  loaderVersion: '0.18.2',
+  fabricApiVersion: null,
+  mappingMode: 'official',
+  yarnVersion: null,
+  gradleVersion: '9.3.0',
 };
 
-const VERIFIED_FORGE_BUILD_DATA = {
-  default: {
-    forgeGradleVersion: '[6.0,6.2)',
-    toolchainResolverVersion: '0.5.0',
-    gradleVersion: '8.1.1',
-    forgeVersion: '52.1.14',
-    loaderVersion: '[52,)',
-  },
-  '1.21': {
-    forgeVersion: '51.0.33',
-    loaderVersion: '[51,)',
-  },
-  '1.21.1': {
-    forgeVersion: '52.1.14',
-    loaderVersion: '[52,)',
-  },
-  '1.21.4': {
-    forgeVersion: '54.1.13',
-    loaderVersion: '[54,)',
-  },
-  '1.21.11': {
-    forgeVersion: '61.1.3',
-    loaderVersion: '[61,)',
-  },
-  '26.1': {
-    forgeVersion: '62.0.0',
-    loaderVersion: '[62,)',
-  },
-  '26.1.1': {
-    forgeVersion: '63.0.1',
-    loaderVersion: '[63,)',
-  },
+const DEFAULT_FORGE_BUILD_DATA = {
+  forgeGradleVersion: '6.0.38',
+  toolchainResolverVersion: '0.9.0',
+  gradleVersion: '8.12.1',
+  forgeVersion: '52.1.14',
+  loaderVersion: '[52,)',
+};
+
+const DEFAULT_NEOFORGE_BUILD_DATA = {
+  userdevVersion: '7.0.120',
+  gradleVersion: '8.12.1',
+  neoforgeVersion: '21.1.107',
+  loaderVersion: '[1,)',
 };
 
 function safeModId(modName) {
@@ -1661,20 +1749,23 @@ function getJavaVersionEnumName(javaVersion) {
 }
 
 function getFabricBuildData(version) {
-  return { ...VERIFIED_FABRIC_BUILD_DATA.default, ...(VERIFIED_FABRIC_BUILD_DATA[version] || {}), ...(RESEARCHED_FABRIC_BUILD_DATA[version] || {}) };
+  return { ...DEFAULT_FABRIC_BUILD_DATA, ...(RESEARCHED_FABRIC_BUILD_DATA[version] || {}) };
 }
 
 function getForgeBuildData(version) {
-  return { ...VERIFIED_FORGE_BUILD_DATA.default, ...(VERIFIED_FORGE_BUILD_DATA[version] || {}), ...(RESEARCHED_FORGE_BUILD_DATA[version] || {}) };
+  return { ...DEFAULT_FORGE_BUILD_DATA, ...(RESEARCHED_FORGE_BUILD_DATA[version] || {}) };
 }
 
 
 
 function getFabricBuildData(version) {
-  return { ...VERIFIED_FABRIC_BUILD_DATA.default, ...(VERIFIED_FABRIC_BUILD_DATA[version] || {}), ...(RESEARCHED_FABRIC_BUILD_DATA[version] || {}) };
+  return { ...DEFAULT_FABRIC_BUILD_DATA, ...(RESEARCHED_FABRIC_BUILD_DATA[version] || {}) };
 }
 function getForgeBuildData(version) {
-  return { ...VERIFIED_FORGE_BUILD_DATA.default, ...(VERIFIED_FORGE_BUILD_DATA[version] || {}), ...(RESEARCHED_FORGE_BUILD_DATA[version] || {}) };
+  return { ...DEFAULT_FORGE_BUILD_DATA, ...(RESEARCHED_FORGE_BUILD_DATA[version] || {}) };
+}
+function getNeoForgeBuildData(version) {
+  return { ...DEFAULT_NEOFORGE_BUILD_DATA, ...(RESEARCHED_NEOFORGE_BUILD_DATA[version] || {}) };
 }
 function isFabricNonObfuscatedVersion(version) { return /^26\./.test(String(version||'')); }
 function getTargetMappingMode(loader, version) {
@@ -1834,7 +1925,7 @@ publishing {
   }
 
   return `plugins {
-    id 'net.neoforged.gradle.userdev' version '7.0.+'
+    id 'net.neoforged.gradle.userdev' version '${getNeoForgeBuildData(version).userdevVersion}'
 }
 
 version = '1.0.0'
@@ -1844,7 +1935,7 @@ base { archivesName = '${modName.toLowerCase()}' }
 minecraft { version = '${version}' }
 
 dependencies {
-    implementation "net.neoforged:neoforge:${version}.0"
+    implementation "net.neoforged:neoforge:${getNeoForgeBuildData(version).neoforgeVersion}"
 }
 
 java {
@@ -2008,6 +2099,8 @@ function gradleWrapperProperties(loader, version) {
     ? getFabricBuildData(version).gradleVersion
     : loader === 'forge'
       ? getForgeBuildData(version).gradleVersion
+      : loader === 'neoforge'
+        ? getNeoForgeBuildData(version).gradleVersion
       : '8.12.1';
   const distributionUrl = `https\\://services.gradle.org/distributions/gradle-${researchedGradle || '8.12.1'}-bin.zip`;
   return `distributionBase=GRADLE_USER_HOME
@@ -2569,6 +2662,40 @@ function renderBuildAttemptLines(logEl, attempts) {
   });
 }
 
+function renderActivityConsole(logEl, entries) {
+  if (!logEl) return;
+  logEl.innerHTML = '';
+  const list = Array.isArray(entries) ? entries.slice(-40) : [];
+  if (!list.length) {
+    logEl.innerHTML = '<div class="build-activity-line">Waiting for worker activity...</div>';
+    return;
+  }
+  list.forEach(entry => {
+    const line = document.createElement('div');
+    line.className = 'build-activity-line';
+    const time = entry?.time ? new Date(entry.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '--:--:--';
+    line.innerHTML = `<strong>${escapeHtml(time)}</strong> ${escapeHtml(entry?.message || '')}`;
+    logEl.appendChild(line);
+  });
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function buildResearchSummary(loader, version) {
+  if (loader === 'fabric') {
+    const data = getFabricBuildData(version);
+    return `Researched from official sources: Gradle ${data.gradleVersion}, loader ${data.loaderVersion}, loom ${data.loomVersion}${data.yarnVersion ? `, Yarn ${data.yarnVersion}` : ''}${data.fabricApiVersion ? `, Fabric API ${data.fabricApiVersion}` : ''}`;
+  }
+  if (loader === 'forge') {
+    const data = getForgeBuildData(version);
+    return `Researched from official sources: Gradle ${data.gradleVersion}, Forge ${data.forgeVersion}, ForgeGradle ${data.forgeGradleVersion}`;
+  }
+  if (loader === 'neoforge') {
+    const data = getNeoForgeBuildData(version);
+    return `Researched from official sources: Gradle ${data.gradleVersion}, NeoForge ${data.neoforgeVersion}, userdev ${data.userdevVersion}`;
+  }
+  return '';
+}
+
 function appendBuildLog(progress, title, logText) {
   if (!logText) return;
   const det = document.createElement('details');
@@ -2654,10 +2781,17 @@ async function startBuild(btn, fullText, customModName = '') {
   progress.className = 'build-progress';
   progress.innerHTML = `
     <div class="build-progress-title">Building <strong>${escapeHtml(loader)} ${escapeHtml(version)}</strong> mod — <strong>${escapeHtml(modName)}</strong></div>
+    <div class="build-source-note">${escapeHtml(buildResearchSummary(loader, version))}</div>
     <div class="build-log" id="blog-${Date.now()}"></div>
+    <div class="build-activity-console">
+      <div class="build-activity-head">Live Activity</div>
+      <div class="build-activity-log"></div>
+    </div>
   `;
   prompt.replaceWith(progress);
   const log = progress.querySelector('.build-log');
+  const activityLogEl = progress.querySelector('.build-activity-log');
+  renderActivityConsole(activityLogEl, [{ time: new Date().toISOString(), message: 'Prepared project files and queued research-backed build.' }]);
 
   function addLine(text, state) {
     const l = document.createElement('div');
@@ -2801,6 +2935,7 @@ async function startBuild(btn, fullText, customModName = '') {
         throw new Error(sj.message || `Status HTTP ${sr.status}`);
       }
       status = sj;
+      renderActivityConsole(activityLogEl, status.activityLog);
 
       if (Array.isArray(status.attempts) && status.attempts.length > renderedAttempts) {
         renderBuildAttemptLines(log, status.attempts.slice(renderedAttempts));

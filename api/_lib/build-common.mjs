@@ -19,9 +19,17 @@ const JAVA_DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
 const JAVA_EXTRACT_TIMEOUT_MS = 2 * 60 * 1000;
 const javaRuntimeCache = new Map();
 
-export async function executeBuildJob({ apiKey, loader, version, modName, files, conversation, onAttempt, onBuildStart }) {
+export async function executeBuildJob({ apiKey, loader, version, modName, files, conversation, onAttempt, onBuildStart, onActivity }) {
   const projectFiles = sanitizeFiles(files);
   const researchedBuild = await loadBuildResearch(loader, version);
+  if (typeof onActivity === 'function') {
+    await onActivity({
+      message: researchedBuild
+        ? `Researched official build metadata for ${loader} ${version}.`
+        : `Fell back to local build defaults for ${loader} ${version}.`,
+      buildResearch: researchedBuild,
+    }).catch(() => {});
+  }
   await normalizeGeneratedFiles(projectFiles, loader, version, researchedBuild);
   const attempts = [];
 
@@ -89,6 +97,12 @@ export async function executeBuildJob({ apiKey, loader, version, modName, files,
     // round rather than aborting immediately.
     let repair = null;
     try {
+      if (typeof onActivity === 'function') {
+        await onActivity({
+          message: `Researching the build failure and asking the AI to repair attempt ${attemptNumber}.`,
+          buildResearch: researchedBuild,
+        }).catch(() => {});
+      }
       repair = await requestBuildFix({
         apiKey,
         loader,
@@ -138,6 +152,14 @@ export async function executeBuildJob({ apiKey, loader, version, modName, files,
 
     attempt.fixSummary = repair?.summary || 'Applied AI build fixes.';
     attempt.changedFiles = changedFiles;
+    if (typeof onActivity === 'function') {
+      await onActivity({
+        message: changedFiles.length
+          ? `${attempt.fixSummary} (${changedFiles.length} file${changedFiles.length === 1 ? '' : 's'} changed).`
+          : `AI repair produced no file changes on attempt ${attemptNumber}.`,
+        buildResearch: researchedBuild,
+      }).catch(() => {});
+    }
     await notifyAttempt(onAttempt, attempts, projectFiles);
 
     if (changedFiles.length === 0 || logUnchanged) {
@@ -632,9 +654,9 @@ function normalizeGradleWrapper(content, loader, researchedBuild = null) {
   const safeVersion = researchedBuild?.gradleVersion || GRADLE_SAFE_VERSION[loader] || GRADLE_SAFE_VERSION.default;
 
   return String(content || '').replace(
-    /(distributionUrl\s*=\s*https\\:\/\/services\.gradle\.org\/distributions\/gradle-)(\d+\.\d+(?:\.\d+)?)(-.+)/,
+    /(distributionUrl\s*=\s*https\\:\/\/services\.gradle\.org\/distributions\/gradle-)(.+?)(-(?:bin|all)\.zip)/,
     (match, prefix, ver, suffix) => {
-      const parts = ver.split('.').map(Number);
+      const parts = String(ver).split(/[^0-9]+/).filter(Boolean).map(Number);
       const major = parts[0] || 0;
       const minor = parts[1] || 0;
 
@@ -648,7 +670,7 @@ function normalizeGradleWrapper(content, loader, researchedBuild = null) {
           (major === GRADLE_MAX_VERSION[0] && minor > GRADLE_MAX_VERSION[1])
         );
 
-      if (tooOld || tooNew || ver !== safeVersion) {
+      if (tooOld || tooNew || String(ver) !== safeVersion) {
         return `${prefix}${safeVersion}${suffix}`;
       }
       return match;
@@ -701,6 +723,14 @@ async function normalizeGeneratedFiles(files, loader, version, researchedBuild =
   if ((loader === 'paper' || loader === 'spigot') && files['build.gradle']) {
     const normalized = normalizeFileData(files['build.gradle']);
     const cleaned = normalizePluginBuildGradle(normalized.content, loader, version);
+    if (cleaned !== normalized.content) {
+      files['build.gradle'] = { encoding: 'utf8', content: cleaned };
+      changedFiles.push('build.gradle');
+    }
+  }
+  if (loader === 'neoforge' && files['build.gradle']) {
+    const normalized = normalizeFileData(files['build.gradle']);
+    const cleaned = normalizeNeoForgeBuildGradle(normalized.content, version, resolvedBuild);
     if (cleaned !== normalized.content) {
       files['build.gradle'] = { encoding: 'utf8', content: cleaned };
       changedFiles.push('build.gradle');
@@ -773,6 +803,7 @@ function buildRepairGuidance(loader, version) {
       'Event bus registration: accept IEventBus modEventBus as a constructor parameter (injected by NeoForge) and call modEventBus.addListener() to register event handlers. Do not use FMLJavaModLoadingContext.',
       'Use net.neoforged.bus.api.SubscribeEvent and net.neoforged.bus.api.IEventBus for event bus types.',
       'Use net.neoforged.fml.common.Mod for the @Mod annotation.',
+      'Research the current net.neoforged.gradle.userdev plugin version and the matching net.neoforged:neoforge artifact version from official NeoForged Maven before changing build files.',
       'Do not mix in Fabric or Forge-only imports unless they are truly shared.',
     ].join('\n');
   }
@@ -925,6 +956,30 @@ function normalizePluginBuildGradle(content, loader, version) {
     next = next.replace(/1\.21\.1-R0\.1-SNAPSHOT/g, `${version}-R0.1-SNAPSHOT`);
   }
 
+  return next;
+}
+
+function normalizeNeoForgeBuildGradle(content, version, researchedBuild = null) {
+  let next = String(content || '');
+  if (!/maven\.neoforged\.net\/releases/i.test(next)) {
+    if (/repositories\s*\{/i.test(next)) {
+      next = next.replace(/repositories\s*\{\s*/i, match => `${match}\n    maven { url = 'https://maven.neoforged.net/releases' }\n`);
+    } else {
+      next += `\n\nrepositories {\n    mavenCentral()\n    maven { url = 'https://maven.neoforged.net/releases' }\n}\n`;
+    }
+  }
+  if (researchedBuild?.userdevVersion) {
+    next = next.replace(
+      /(id\s+'net\.neoforged\.gradle\.userdev'\s+version\s+')([^']+)(')/g,
+      `$1${researchedBuild.userdevVersion}$3`,
+    );
+  }
+  if (researchedBuild?.neoforgeVersion) {
+    next = next.replace(
+      /implementation\s+"net\.neoforged:neoforge:[^"]+"/g,
+      `implementation "net.neoforged:neoforge:${researchedBuild.neoforgeVersion}"`,
+    );
+  }
   return next;
 }
 

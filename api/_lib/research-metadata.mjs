@@ -21,6 +21,10 @@ const FALLBACK_VERSIONS = {
     '1.14.4',
     '1.12.2',
   ],
+  neoforge: [
+    '1.21.11', '1.21.10', '1.21.4', '1.21.3', '1.21.2', '1.21.1', '1.21',
+    '1.20.6', '1.20.4', '1.20.2', '1.20.1',
+  ],
 };
 
 const FABRIC_BUILD_FALLBACK = {
@@ -40,6 +44,13 @@ const FORGE_BUILD_FALLBACK = {
   loaderVersion: '[52,)',
 };
 
+const NEOFORGE_BUILD_FALLBACK = {
+  userdevVersion: '7.0.120',
+  gradleVersion: '8.12.1',
+  neoforgeVersion: '21.1.107',
+  loaderVersion: '[1,)',
+};
+
 const SOURCES = {
   fabricGameVersions: 'https://meta.fabricmc.net/v2/versions/game',
   fabricLoaderVersions: 'https://meta.fabricmc.net/v2/versions/loader',
@@ -50,6 +61,8 @@ const SOURCES = {
   forgePromotions: 'https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json',
   forgeMetadata: 'https://maven.minecraftforge.net/net/minecraftforge/forge/maven-metadata.xml',
   forgeGradlePluginMetadata: 'https://plugins.gradle.org/m2/net/minecraftforge/gradle/net.minecraftforge.gradle.gradle.plugin/maven-metadata.xml',
+  neoforgeMetadata: 'https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml',
+  neoforgeUserdevMetadata: 'https://maven.neoforged.net/releases/net/neoforged/gradle/userdev/net.neoforged.gradle.userdev.gradle.plugin/maven-metadata.xml',
   foojayResolverMetadata: 'https://plugins.gradle.org/m2/org/gradle/toolchains/foojay-resolver-convention/org.gradle.toolchains.foojay-resolver-convention.gradle.plugin/maven-metadata.xml',
   gradleVersions: 'https://services.gradle.org/versions/all',
 };
@@ -63,6 +76,10 @@ export async function getLoaderVersions(loader) {
     if (loader === 'forge') {
       const versions = await fetchForgeVersions();
       return { loader, versions, sources: [SOURCES.forgePromotions, SOURCES.forgeMetadata] };
+    }
+    if (loader === 'neoforge') {
+      const versions = await fetchNeoForgeVersions();
+      return { loader, versions, sources: [SOURCES.neoforgeMetadata] };
     }
     return { loader, versions: [], sources: [] };
   });
@@ -101,6 +118,19 @@ export async function getBuildResearch(loader, version) {
         ],
       };
     }
+    if (loader === 'neoforge') {
+      const build = await fetchNeoForgeBuildResearch(version);
+      return {
+        loader,
+        version,
+        build,
+        sources: [
+          SOURCES.neoforgeMetadata,
+          SOURCES.neoforgeUserdevMetadata,
+          SOURCES.gradleVersions,
+        ],
+      };
+    }
     return { loader, version, build: null, sources: [] };
   });
 }
@@ -131,6 +161,20 @@ async function fetchForgeVersions() {
     return versions.length ? versions : FALLBACK_VERSIONS.forge;
   } catch {
     return FALLBACK_VERSIONS.forge;
+  }
+}
+
+async function fetchNeoForgeVersions() {
+  try {
+    const metadata = await fetchText(SOURCES.neoforgeMetadata);
+    const versions = uniqueSortedVersions(
+      parseMavenVersions(metadata)
+        .map(mapNeoForgeArtifactToMinecraftVersion)
+        .filter(Boolean),
+    );
+    return versions.length ? versions : FALLBACK_VERSIONS.neoforge;
+  } catch {
+    return FALLBACK_VERSIONS.neoforge;
   }
 }
 
@@ -196,6 +240,29 @@ async function fetchForgeBuildResearch(version) {
     toolchainResolverVersion,
     gradleVersion,
     loaderVersion: `[${loaderMajor},)`,
+  };
+}
+
+async function fetchNeoForgeBuildResearch(version) {
+  const [neoforgeXml, userdevXml, gradleVersions] = await Promise.all([
+    safeFetchText(SOURCES.neoforgeMetadata),
+    safeFetchText(SOURCES.neoforgeUserdevMetadata),
+    safeFetchJson(SOURCES.gradleVersions),
+  ]);
+
+  const neoforgeVersion = pickLatestNeoForgeForGame(parseMavenVersions(neoforgeXml), version)
+    || NEOFORGE_BUILD_FALLBACK.neoforgeVersion;
+  const userdevVersion = pickLatestStable(parseMavenVersions(userdevXml))
+    || NEOFORGE_BUILD_FALLBACK.userdevVersion;
+  const gradleVersion = pickGradleVersion(gradleVersions, { major: 8, minMinor: 5 })
+    || NEOFORGE_BUILD_FALLBACK.gradleVersion;
+
+  return {
+    ...NEOFORGE_BUILD_FALLBACK,
+    neoforgeVersion,
+    userdevVersion,
+    gradleVersion,
+    loaderVersion: '[1,)',
   };
 }
 
@@ -299,6 +366,7 @@ function pickGradleVersion(entries, options = {}) {
       .filter(entry => entry && typeof entry.version === 'string')
       .filter(entry => entry.snapshot !== true && entry.nightly !== true && entry.releaseNightly !== true && entry.broken !== true)
       .map(entry => entry.version)
+      .filter(version => !/milestone|rc|preview|beta|alpha|snapshot/i.test(String(version)))
       .filter(version => {
         const parsed = parseVersionParts(version);
         if (!parsed.length) return false;
@@ -331,4 +399,27 @@ function parseVersionParts(version) {
     .split(/[^0-9]+/)
     .filter(Boolean)
     .map(Number);
+}
+
+function mapNeoForgeArtifactToMinecraftVersion(version) {
+  const value = String(version || '');
+  if (/alpha|beta|snapshot|pre|rc/i.test(value)) return null;
+  const match = value.match(/^(\d+)\.(\d+)\.(\d+)/);
+  if (!match) return null;
+  const branch = Number(match[1]);
+  const minor = Number(match[2]);
+  if (branch === 21) {
+    return minor === 0 ? '1.21' : `1.21.${minor}`;
+  }
+  if (branch === 20) {
+    return minor === 1 ? '1.20.1' : `1.20.${minor}`;
+  }
+  return null;
+}
+
+function pickLatestNeoForgeForGame(versions, minecraftVersion) {
+  const matches = uniqueSortedVersions(
+    (versions || []).filter(version => mapNeoForgeArtifactToMinecraftVersion(version) === minecraftVersion),
+  );
+  return matches[0] || null;
 }

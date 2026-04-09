@@ -67,6 +67,7 @@ export default async function handler(request) {
       version,
       modName,
       attempts: [],
+      activityLog: [{ time: now, message: 'Build job queued and waiting for worker pickup.' }],
       createdAt: now,
       updatedAt: now,
       provider: 'vercel',

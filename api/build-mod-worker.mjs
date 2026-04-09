@@ -118,6 +118,7 @@ async function bootstrapDirectJob(jobId, input) {
     version: input.version,
     modName: input.modName,
     attempts: [],
+    activityLog: [{ time: now, message: 'Worker accepted the job and is preparing to start.' }],
     createdAt: input.createdAt || now,
     updatedAt: now,
     provider: 'vercel',

@@ -46,6 +46,7 @@ function fallbackQueuedStatus(jobId) {
     jobId,
     status: 'queued',
     attempts: [],
+    activityLog: [{ time: new Date().toISOString(), message: 'Waiting for build status...' }],
     updatedAt: new Date().toISOString(),
     provider: 'vercel',
     message: 'Waiting for build status...',

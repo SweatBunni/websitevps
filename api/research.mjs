@@ -21,13 +21,15 @@ export default async function handler(request) {
     if (kind === 'versions') {
       const fabric = await getLoaderVersions('fabric');
       const forge = await getLoaderVersions('forge');
+      const neoforge = await getLoaderVersions('neoforge');
       return json({
         kind,
         versions: {
           fabric: fabric.versions,
           forge: forge.versions,
+          neoforge: neoforge.versions,
         },
-        sources: [...new Set([...(fabric.sources || []), ...(forge.sources || [])])],
+        sources: [...new Set([...(fabric.sources || []), ...(forge.sources || []), ...(neoforge.sources || [])])],
       });
     }
 

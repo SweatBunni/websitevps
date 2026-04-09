@@ -27,7 +27,7 @@ async function researchMsg(loader, version) {
   const mode = mappingMode(loader, version);
   const lines = [];
   let researchedBuild = null;
-  if (loader === 'fabric' || loader === 'forge') {
+  if (loader === 'fabric' || loader === 'forge' || loader === 'neoforge') {
     try {
       researchedBuild = (await getBuildResearch(loader, version))?.build || null;
     } catch {
@@ -54,6 +54,9 @@ async function researchMsg(loader, version) {
   }
   if (loader === 'forge' && researchedBuild) {
     lines.push(`Use researched versions where relevant: Forge ${researchedBuild.forgeVersion}, ForgeGradle ${researchedBuild.forgeGradleVersion}, Gradle ${researchedBuild.gradleVersion}, toolchain resolver ${researchedBuild.toolchainResolverVersion}.`);
+  }
+  if (loader === 'neoforge' && researchedBuild) {
+    lines.push(`Use researched versions where relevant: NeoForge ${researchedBuild.neoforgeVersion}, userdev plugin ${researchedBuild.userdevVersion}, Gradle ${researchedBuild.gradleVersion}.`);
   }
   if (loader === 'paper') {
     lines.push(`Paper ${version}: use the current Paper repository https://repo.papermc.io/repository/maven-public/ and avoid the old papermc.io repository URL.`);

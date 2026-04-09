@@ -33,6 +33,7 @@ export async function runBuildJobInput(jobId, input) {
     startedAt,
     workerStartedAt: startedAt,
     updatedAt: startedAt,
+    activityLog: appendActivity([], 'Worker started and is preparing the build.'),
     provider: 'vercel',
   });
 
@@ -61,6 +62,7 @@ export async function runBuildJobInput(jobId, input) {
         createdAt: input.createdAt,
         startedAt,
         updatedAt: new Date().toISOString(),
+        activityLog: appendActivity(latest?.activityLog, `Generated ${textureResult.generatedTextures.length} texture asset(s).`),
         provider: 'vercel',
       });
     }
@@ -72,6 +74,24 @@ export async function runBuildJobInput(jobId, input) {
       modName: input.modName,
       files: input.files,
       conversation: input.conversation || [],
+      onActivity: async ({ message, buildResearch }) => {
+        const latest = await getLatestStatus(jobId);
+        await putStatus(jobId, {
+          ...(latest || {}),
+          jobId,
+          status: 'running',
+          loader: input.loader,
+          version: input.version,
+          modName: input.modName,
+          attempts: latest?.attempts || [],
+          createdAt: input.createdAt,
+          startedAt,
+          updatedAt: new Date().toISOString(),
+          buildResearch: buildResearch || latest?.buildResearch || null,
+          activityLog: appendActivity(latest?.activityLog, message),
+          provider: 'vercel',
+        });
+      },
       onBuildStart: async ({ attemptNumber }) => {
         const latest = await getLatestStatus(jobId);
         await putStatus(jobId, {
@@ -86,6 +106,7 @@ export async function runBuildJobInput(jobId, input) {
           startedAt,
           updatedAt: new Date().toISOString(),
           buildLogTail: latest?.buildLogTail || '',
+          activityLog: appendActivity(latest?.activityLog, `Starting Gradle attempt ${attemptNumber}.`),
           currentAttempt: attemptNumber,
           provider: 'vercel',
         });
@@ -104,6 +125,7 @@ export async function runBuildJobInput(jobId, input) {
           startedAt,
           updatedAt: new Date().toISOString(),
           buildLogTail: attempts[attempts.length - 1]?.logTail || '',
+          activityLog: appendActivity(latest?.activityLog, attempts[attempts.length - 1]?.fixSummary ? `Applied AI repair: ${attempts[attempts.length - 1].fixSummary}` : `Completed attempt ${attempts.length}.`),
           provider: 'vercel',
         });
       },
@@ -128,6 +150,7 @@ export async function runBuildJobInput(jobId, input) {
         textureWarnings: textureResult.textureWarnings,
         jarFileName: result.jarFileName,
         buildLogTail: result.buildLogTail || '',
+        activityLog: appendActivity((await getLatestStatus(jobId))?.activityLog, 'Build completed successfully and the JAR is ready.'),
         createdAt: input.createdAt,
         startedAt,
         completedAt,
@@ -149,6 +172,7 @@ export async function runBuildJobInput(jobId, input) {
       textureWarnings: textureResult.textureWarnings,
       message: result.message || 'Build failed.',
       buildLogTail: result.buildLogTail || '',
+      activityLog: appendActivity((await getLatestStatus(jobId))?.activityLog, `Build failed: ${result.message || 'unknown error'}`),
       createdAt: input.createdAt,
       startedAt,
       completedAt: failedAt,
@@ -166,6 +190,7 @@ export async function runBuildJobInput(jobId, input) {
       modName: input.modName,
       attempts: [],
       message: error.message || 'Background build worker failed unexpectedly.',
+      activityLog: appendActivity((await getLatestStatus(jobId))?.activityLog, `Worker error: ${error.message || 'unexpected failure'}`),
       createdAt: input.createdAt,
       startedAt,
       completedAt: failedAt,
@@ -174,6 +199,16 @@ export async function runBuildJobInput(jobId, input) {
     });
     return { status: 'failed' };
   }
+}
+
+function appendActivity(existing, message) {
+  const next = Array.isArray(existing) ? existing.slice(-39) : [];
+  if (!message) return next;
+  next.push({
+    time: new Date().toISOString(),
+    message: String(message),
+  });
+  return next;
 }
 
 async function getJsonWithRetry(jobId, fileName, attempts = 10, delayMs = 1000) {
