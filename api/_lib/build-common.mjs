@@ -5,8 +5,8 @@ import { spawn } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { x as tarExtract } from 'tar';
-import { getBuildResearch, getDeepBuildResearch } from './research-metadata.mjs';
-import { rememberBuildOutcome, retrieveRelevantMemories } from './site-memory.mjs';
+import { getBuildResearch, getDeepBuildResearch, getAutonomousRepairResearch } from './research-metadata.mjs';
+import { rememberBuildOutcome, rememberResearchBundle, retrieveRelevantMemories } from './site-memory.mjs';
 
 const MAX_BUILD_ATTEMPTS = 6;
 const MAX_REPAIR_ATTEMPTS_WITHOUT_PROGRESS = 3;
@@ -483,6 +483,13 @@ async function requestBuildFix({ apiKey, loader, version, modName, conversation,
     content: truncateRepairFileContent(content, filePath),
   }));
   const trimmedBuildLog = tail(buildLog, MAX_REPAIR_LOG_CHARS);
+  const autonomousResearch = await loadAutonomousRepairResearch({
+    loader,
+    version,
+    failureSignature,
+    buildLog: trimmedBuildLog,
+    prompt: extractLatestPrompt(conversation),
+  });
   const relevantMemories = loader === 'fabric' && isFabricNonObfuscatedVersion(version)
     ? []
     : await retrieveRelevantMemories({
@@ -520,6 +527,7 @@ async function requestBuildFix({ apiKey, loader, version, modName, conversation,
           'Keep generated Gradle files close to the verified scaffold unless the build log clearly requires a script change.',
           researchedBuild ? `Researched build metadata for this target: ${JSON.stringify(researchedBuild)}` : '',
           formatResearchPromptContext(researchBundle),
+          formatAutonomousResearchContext(autonomousResearch),
           relevantMemories.length ? `Relevant prior site memory:\n${relevantMemories.map(memory => `- ${memory.text}`).join('\n')}` : '',
           buildRepairGuidance(loader, version),
           requireConcreteChanges
@@ -757,6 +765,27 @@ function upgradeGradleWrapperIfNeeded(content) {
   return normalizeGradleWrapper(content, 'default');
 }
 
+async function loadAutonomousRepairResearch({ loader, version, failureSignature, buildLog, prompt }) {
+  try {
+    const bundle = await getAutonomousRepairResearch(loader, version, {
+      errorText: [failureSignature, buildLog].filter(Boolean).join('\n'),
+      prompt,
+      timeBudgetMs: 45000,
+    });
+    await rememberResearchBundle({
+      loader,
+      version,
+      query: bundle.query,
+      summary: bundle.summary,
+      sources: bundle.sources,
+      errorText: bundle.errorText,
+    });
+    return bundle;
+  } catch {
+    return null;
+  }
+}
+
 async function normalizeGeneratedFiles(files, loader, version, researchedBuild = null) {
   const changedFiles = [];
   const resolvedBuild = researchedBuild || await loadBuildResearch(loader, version);
@@ -901,6 +930,15 @@ function formatResearchPromptContext(researchBundle) {
   return sections.join('\n');
 }
 
+function formatAutonomousResearchContext(bundle) {
+  if (!bundle || !Array.isArray(bundle.sources) || !bundle.sources.length) return '';
+  const lines = bundle.sources
+    .slice(0, 8)
+    .map(source => `- [${source.tier || 'unknown'}] ${source.title || source.url}: ${source.snippet || ''}`);
+  if (!lines.length) return '';
+  return `Autonomous online repair research for this exact failure:\nSearch query: ${bundle.query}\n${lines.join('\n')}\nPrioritize official sources first, then GitHub/issues/forums/posts when confirming the fix.`;
+}
+
 function buildRepairGuidance(loader, version) {
   if (loader === 'fabric') {
     if (isFabricNonObfuscatedVersion(version)) {
@@ -1038,6 +1076,10 @@ function normalizeFabricBuildGradle(content, version, researchedBuild = null, ne
   next = next.replace(/id\s+'fabric-loom'/g, "id 'net.fabricmc.fabric-loom'");
   next = next.replace(/\bid\s+"net\.fabricmc\.fabric-loom-remap"/g, 'id "net.fabricmc.fabric-loom"');
   next = next.replace(/\bid\s+"fabric-loom"/g, 'id "net.fabricmc.fabric-loom"');
+  next = next.replace(/\bfabricLoader\s*\(\s*(["'][^"']+["'])\s*\)/g, 'implementation $1');
+  next = next.replace(/\bfabricApi\s*\(\s*(["'][^"']+["'])\s*\)/g, 'implementation $1');
+  next = next.replace(/\byarnMappings\s*\(\s*(["'][^"']+["'])\s*\)/g, 'mappings $1');
+  next = next.replace(/\bofficialMappings\s*\(\s*\)/g, 'mappings loom.officialMojangMappings()');
 
   next = next.replace(/^\s*mappings\s+"net\.fabricmc:yarn:[^"\r\n]*"\s*(?:\r?\n|$)/gm, '');
   next = next.replace(/^\s*mappings\s+loom\.officialMojangMappings\(\)\s*(?:\r?\n|$)/gm, '');

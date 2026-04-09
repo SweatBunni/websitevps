@@ -37,6 +37,21 @@ export async function rememberBuildOutcome({ loader, version, modName, prompt, s
   });
 }
 
+export async function rememberResearchBundle({ loader, version, query, summary, sources, errorText }) {
+  const cleanQuery = compactText(query, 1400);
+  if (!cleanQuery) return;
+  await appendEntry({
+    type: 'research',
+    loader: loader || '',
+    version: version || '',
+    query: cleanQuery,
+    errorText: compactText(errorText, 1800),
+    summary: compactText(summary, 900),
+    sources: Array.isArray(sources) ? sources.slice(0, 12) : [],
+    createdAt: new Date().toISOString(),
+  });
+}
+
 export async function retrieveRelevantMemories({ query, loader = '', version = '', type = '', limit = 4 }) {
   const cleanQuery = compactText(query, 3000);
   if (!cleanQuery) return [];
@@ -98,6 +113,8 @@ function scoreEntry(entry, query, loader, version) {
     entry.summary,
     entry.modName,
     entry.buildLog,
+    entry.query,
+    entry.errorText,
   ].filter(Boolean).join(' '));
   if (!entryTokens.size) return 0;
 
@@ -126,6 +143,20 @@ function formatMemory(entry) {
         + `${entry.fixSummary ? ` Fix tried: ${entry.fixSummary}.` : ''}`
         + `${entry.changedFiles?.length ? ` Changed files: ${entry.changedFiles.join(', ')}.` : ''}`,
         500,
+      ),
+    };
+  }
+
+  if (entry.type === 'research') {
+    return {
+      type: entry.type,
+      loader: entry.loader,
+      version: entry.version,
+      createdAt: entry.createdAt,
+      text: compactText(
+        `Prior research bundle for ${entry.loader} ${entry.version}: Query: ${entry.query || ''}. ${entry.summary || ''}`
+        + `${entry.sources?.length ? ` Sources: ${entry.sources.map(source => source.title || source.url || '').filter(Boolean).join(', ')}.` : ''}`,
+        650,
       ),
     };
   }

@@ -2,6 +2,7 @@ const CACHE_TTL_MS = 30 * 60 * 1000;
 const DEEP_RESEARCH_BUDGET_MS = 115 * 1000;
 const RESEARCH_REQUEST_TIMEOUT_MS = 12 * 1000;
 const MAX_RESEARCH_SNIPPET_CHARS = 1200;
+const MAX_AUTONOMOUS_SEARCH_RESULTS = 8;
 const cache = new Map();
 
 const FALLBACK_VERSIONS = {
@@ -341,6 +342,27 @@ export async function getDeepBuildResearch(loader, version, options = {}) {
   });
 }
 
+export async function getAutonomousRepairResearch(loader, version, options = {}) {
+  const errorText = compactSearchText(options.errorText || options.failureSignature || '', 1200);
+  const promptText = compactSearchText(options.prompt || '', 500);
+  const query = buildAutonomousQuery(loader, version, errorText, promptText);
+  const cacheKey = `auto-research:${loader}:${version}:${query}`;
+  return withCache(cacheKey, async () => {
+    const searchResults = await searchWebForRepairContext(query, loader);
+    const fetchedSources = await fetchDeepResearchEvidence(searchResults, Number(options.timeBudgetMs) || 45000);
+    const rankedSources = rankAutonomousSources(fetchedSources, loader, version, errorText);
+    return {
+      loader,
+      version,
+      query,
+      errorText,
+      sources: rankedSources,
+      summary: summarizeAutonomousResearch(loader, version, rankedSources, query),
+      completedAt: new Date().toISOString(),
+    };
+  });
+}
+
 async function fetchFabricVersions() {
   try {
     const data = await fetchJson(SOURCES.fabricGameVersions);
@@ -512,6 +534,143 @@ async function fetchDeepResearchEvidence(sources, timeBudgetMs) {
   return settled
     .map(result => result.status === 'fulfilled' ? result.value : null)
     .filter(Boolean);
+}
+
+async function searchWebForRepairContext(query, loader) {
+  const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+  const html = await fetchTextWithTimeout(searchUrl, RESEARCH_REQUEST_TIMEOUT_MS, 'text/html,*/*');
+  const results = parseDuckDuckGoResults(html)
+    .map(result => ({
+      ...result,
+      tier: classifyResearchTier(result.url, loader),
+      kind: 'text',
+    }))
+    .filter(result => Boolean(result.url))
+    .slice(0, MAX_AUTONOMOUS_SEARCH_RESULTS);
+  return results.length ? results : buildCoreResearchSources(loader, '').slice(0, 4);
+}
+
+function parseDuckDuckGoResults(html) {
+  const text = String(html || '');
+  const matches = [...text.matchAll(/<a[^>]+class="[^"]*result__a[^"]*"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)];
+  return matches.map(match => ({
+    url: decodeDuckDuckGoUrl(match[1]),
+    title: stripHtml(match[2]) || decodeDuckDuckGoUrl(match[1]),
+  }));
+}
+
+function decodeDuckDuckGoUrl(url) {
+  const raw = String(url || '').trim();
+  if (!raw) return '';
+  try {
+    const parsed = new URL(raw, 'https://html.duckduckgo.com');
+    if (parsed.hostname.includes('duckduckgo.com') && parsed.searchParams.get('uddg')) {
+      return decodeURIComponent(parsed.searchParams.get('uddg'));
+    }
+    return parsed.toString();
+  } catch {
+    return raw;
+  }
+}
+
+function classifyResearchTier(url, loader) {
+  const host = safeHostname(url);
+  if (!host) return 'community';
+  if (
+    host.includes('fabricmc.net')
+    || host.includes('maven.fabricmc.net')
+    || host.includes('docs.fabricmc.net')
+    || host.includes('minecraftforge.net')
+    || host.includes('files.minecraftforge.net')
+    || host.includes('maven.minecraftforge.net')
+    || host.includes('docs.minecraftforge.net')
+    || host.includes('neoforged.net')
+    || host.includes('maven.neoforged.net')
+    || host.includes('docs.neoforged.net')
+    || host.includes('plugins.gradle.org')
+    || host.includes('services.gradle.org')
+  ) {
+    return 'official';
+  }
+  if (host.includes('github.com') || host.includes('forums.minecraftforge.net') || host.includes('modrinth.com') || host.includes('stackoverflow.com') || host.includes('reddit.com')) {
+    return 'community';
+  }
+  return loader === 'fabric' || loader === 'forge' || loader === 'neoforge' ? 'post' : 'community';
+}
+
+function rankAutonomousSources(sources, loader, version, errorText) {
+  return (sources || [])
+    .filter(item => item && item.status === 'ok' && item.snippet)
+    .map(item => ({
+      ...item,
+      score: scoreAutonomousSource(item, loader, version, errorText),
+    }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 8);
+}
+
+function scoreAutonomousSource(source, loader, version, errorText) {
+  let score = source.tier === 'official' ? 100 : source.tier === 'community' ? 60 : 40;
+  const haystack = `${source.title || ''} ${source.snippet || ''} ${source.url || ''}`.toLowerCase();
+  if (haystack.includes(String(version || '').toLowerCase())) score += 25;
+  if (haystack.includes(String(loader || '').toLowerCase())) score += 20;
+  tokenize(errorText).forEach(token => {
+    if (haystack.includes(token)) score += 4;
+  });
+  return score;
+}
+
+function summarizeAutonomousResearch(loader, version, sources, query) {
+  const official = (sources || []).filter(source => source.tier === 'official').length;
+  const community = (sources || []).filter(source => source.tier === 'community').length;
+  const posts = (sources || []).filter(source => source.tier === 'post').length;
+  return `Autonomous repair research searched online for ${loader} ${version} using "${query}" and kept ${official} official, ${community} community, and ${posts} post/forum sources.`;
+}
+
+function buildAutonomousQuery(loader, version, errorText, promptText) {
+  const errorKeywords = tokenizeSearchText(errorText).slice(0, 12).join(' ');
+  const promptKeywords = tokenizeSearchText(promptText).slice(0, 6).join(' ');
+  return [loader, version, errorKeywords, promptKeywords, 'modding fix']
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+}
+
+function tokenizeSearchText(text) {
+  return [...new Set(
+    String(text || '')
+      .toLowerCase()
+      .split(/[^a-z0-9_+.:-]+/)
+      .filter(token => token.length >= 3)
+  )];
+}
+
+function compactSearchText(text, maxChars) {
+  const value = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!value) return '';
+  return value.length <= maxChars ? value : value.slice(0, maxChars);
+}
+
+function stripHtml(text) {
+  return String(text || '')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function safeHostname(url) {
+  try {
+    return new URL(String(url || '')).hostname.toLowerCase();
+  } catch {
+    return '';
+  }
 }
 
 async function fetchResearchSource(source, deadlineMs) {
