@@ -1,3 +1,10 @@
+
+async function getGradleForMinecraft(mcVersion){
+  const res = await fetch("https://services.gradle.org/versions/current");
+  const data = await res.json();
+  return data.version;
+}
+
 import http from 'node:http';
 import fs from 'node:fs/promises';
 import syncFs from 'node:fs';

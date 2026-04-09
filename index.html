@@ -832,7 +832,15 @@ details pre {
   </div>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js">
+function getSelectedSetup() {
+  return {
+    loader: document.getElementById("loader-sel")?.value,
+    mcVersion: document.getElementById("version-sel")?.value
+  };
+}
+
+</script>
 <script>
 const DEFAULT_SYSTEM = `You are CodexMC, an expert Minecraft Java Edition coding assistant.
 You specialize in:
@@ -2808,6 +2816,14 @@ async function startBuild(btn, fullText, customModName = '') {
   }
   scrollToBottom();
 }
+
+function getSelectedSetup() {
+  return {
+    loader: document.getElementById("loader-sel")?.value,
+    mcVersion: document.getElementById("version-sel")?.value
+  };
+}
+
 </script>
 </body>
 </html>
