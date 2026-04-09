@@ -1853,7 +1853,7 @@ dependencies {
     minecraft "com.mojang:minecraft:\${project.minecraft_version}"
 ${mappingsLine}
     implementation "net.fabricmc:fabric-loader:\${project.loader_version}"
-${fabric.fabricApiVersion ? `    implementation "net.fabricmc.fabric-api:fabric-api:\${project.fabric_version}"` : '    // Add Fabric API here if your generated code needs it.'}
+    // Add Fabric API here only if your generated code imports net.fabricmc.fabric.api.*.
 }
 
 processResources {
@@ -2041,7 +2041,7 @@ java_version=${javaVersion}
 maven_group=com.minecraftmod
 archives_base_name=${archiveName}
 mod_id=${archiveName}
-${fabric.fabricApiVersion ? `fabric_version=${fabric.fabricApiVersion}` : '# fabric_version=<add a verified Fabric API version if your mod needs Fabric API>'}`;
+# fabric_version=${fabric.fabricApiVersion || '<add a verified Fabric API version if your mod needs Fabric API>'}`;
   }
 
   if (loader === 'forge') {

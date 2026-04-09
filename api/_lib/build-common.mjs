@@ -686,6 +686,7 @@ function upgradeGradleWrapperIfNeeded(content) {
 async function normalizeGeneratedFiles(files, loader, version, researchedBuild = null) {
   const changedFiles = [];
   const resolvedBuild = researchedBuild || await loadBuildResearch(loader, version);
+  const needsFabricApi = loader === 'fabric' ? projectUsesFabricApi(files) : false;
 
   // Upgrade Gradle wrapper if it's too old to support the host JVM.
   // Gradle < 8.3 cannot run on Java 21 (class file major version 65).
@@ -714,10 +715,29 @@ async function normalizeGeneratedFiles(files, loader, version, researchedBuild =
 
   if (loader === 'fabric' && files['build.gradle']) {
     const normalized = normalizeFileData(files['build.gradle']);
-    const cleaned = normalizeFabricBuildGradle(stripUnsupportedFabricLoomSettings(normalized.content, version), version, resolvedBuild);
+    const cleaned = normalizeFabricBuildGradle(stripUnsupportedFabricLoomSettings(normalized.content, version), version, resolvedBuild, needsFabricApi);
     if (cleaned !== normalized.content) {
       files['build.gradle'] = { encoding: 'utf8', content: cleaned };
       changedFiles.push('build.gradle');
+    }
+  }
+  if (loader === 'fabric' && files['gradle.properties']) {
+    const normalized = normalizeFileData(files['gradle.properties']);
+    const cleaned = normalizeFabricGradleProperties(normalized.content, resolvedBuild, needsFabricApi);
+    if (cleaned !== normalized.content) {
+      files['gradle.properties'] = { encoding: 'utf8', content: cleaned };
+      changedFiles.push('gradle.properties');
+    }
+  }
+  if (loader === 'fabric') {
+    for (const candidate of ['fabric.mod.json', 'src/main/resources/fabric.mod.json']) {
+      if (!files[candidate]) continue;
+      const normalized = normalizeFileData(files[candidate]);
+      const cleaned = normalizeFabricModJson(normalized.content, needsFabricApi);
+      if (cleaned !== normalized.content) {
+        files[candidate] = { encoding: 'utf8', content: cleaned };
+        changedFiles.push(candidate);
+      }
     }
   }
   if ((loader === 'paper' || loader === 'spigot') && files['build.gradle']) {
@@ -905,7 +925,7 @@ function stripUnsupportedFabricLoomSettings(content, version) {
   return next.trimEnd();
 }
 
-function normalizeFabricBuildGradle(content, version, researchedBuild = null) {
+function normalizeFabricBuildGradle(content, version, researchedBuild = null, needsFabricApi = false) {
   let next = String(content || '');
   const mappingMode = getNormalizedFabricMappingMode(version, researchedBuild);
   next = next.replace(/id\s+'net\.fabricmc\.fabric-loom-remap'/g, "id 'net.fabricmc.fabric-loom'");
@@ -915,6 +935,7 @@ function normalizeFabricBuildGradle(content, version, researchedBuild = null) {
 
   next = next.replace(/^\s*mappings\s+"net\.fabricmc:yarn:[^"\r\n]*"\s*(?:\r?\n|$)/gm, '');
   next = next.replace(/^\s*mappings\s+loom\.officialMojangMappings\(\)\s*(?:\r?\n|$)/gm, '');
+  next = next.replace(/^\s*(?:implementation|modImplementation|compileOnly|modCompileOnly|runtimeOnly|modRuntimeOnly)\s+"net\.fabricmc\.fabric-api:fabric-api:[^"\r\n]+"\s*(?:\r?\n|$)/gm, '');
 
   if (mappingMode === 'yarn') {
     if (!/^\s*mappings\s+"net\.fabricmc:yarn:\$\{project\.yarn_mappings\}:v2"\s*$/m.test(next)) {
@@ -935,6 +956,12 @@ function normalizeFabricBuildGradle(content, version, researchedBuild = null) {
   next = next.replace(/\bmodImplementation\b/g, 'implementation');
   next = next.replace(/\bmodCompileOnly\b/g, 'compileOnly');
   next = next.replace(/\bmodRuntimeOnly\b/g, 'runtimeOnly');
+  if (needsFabricApi && researchedBuild?.fabricApiVersion && !/net\.fabricmc\.fabric-api:fabric-api:\$\{project\.fabric_version\}/.test(next)) {
+    next = next.replace(
+      /(implementation\s+"net\.fabricmc:fabric-loader:\\\$\{project\.loader_version\}"\s*\r?\n)/,
+      `$1    implementation "net.fabricmc.fabric-api:fabric-api:\${project.fabric_version}"\n`,
+    );
+  }
   return next;
 }
 
@@ -947,6 +974,44 @@ function getNormalizedFabricMappingMode(version, researchedBuild = null) {
 
 function isValidYarnVersion(version) {
   return /^\d+\.\d+(?:\.\d+)?\+build\.\d+$/.test(String(version || ''));
+}
+
+function normalizeFabricGradleProperties(content, researchedBuild = null, needsFabricApi = false) {
+  let next = String(content || '');
+  next = next.replace(/^\s*fabric_version=.*(?:\r?\n|$)/gm, '');
+  if (needsFabricApi && researchedBuild?.fabricApiVersion) {
+    const suffix = next.endsWith('\n') ? '' : '\n';
+    next = `${next}${suffix}fabric_version=${researchedBuild.fabricApiVersion}\n`;
+  }
+  return next.trimEnd();
+}
+
+function normalizeFabricModJson(content, needsFabricApi = false) {
+  try {
+    const parsed = JSON.parse(String(content || '{}'));
+    const depends = parsed && typeof parsed.depends === 'object' && !Array.isArray(parsed.depends)
+      ? { ...parsed.depends }
+      : {};
+    if (needsFabricApi) {
+      depends['fabric-api'] = depends['fabric-api'] || '*';
+    } else {
+      delete depends['fabric-api'];
+      delete depends['fabric-api-base'];
+    }
+    if (Object.keys(depends).length) parsed.depends = depends;
+    else delete parsed.depends;
+    return JSON.stringify(parsed, null, 2);
+  } catch {
+    return content;
+  }
+}
+
+function projectUsesFabricApi(files) {
+  return Object.values(files || {}).some(file => {
+    const normalized = normalizeFileData(file);
+    if (normalized.encoding !== 'utf8') return false;
+    return /\bnet\.fabricmc\.fabric\.api\b/.test(normalized.content || '');
+  });
 }
 
 function normalizeFabricJavaSource(content, version) {
