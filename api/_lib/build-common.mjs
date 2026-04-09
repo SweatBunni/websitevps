@@ -479,13 +479,15 @@ async function requestBuildFix({ apiKey, loader, version, modName, conversation,
     content: truncateRepairFileContent(content, filePath),
   }));
   const trimmedBuildLog = tail(buildLog, MAX_REPAIR_LOG_CHARS);
-  const relevantMemories = await retrieveRelevantMemories({
-    query: `${failureSignature}\n${trimmedBuildLog}\n${extractLatestPrompt(conversation)}`,
-    loader,
-    version,
-    type: 'build',
-    limit: 3,
-  });
+  const relevantMemories = loader === 'fabric' && isFabricNonObfuscatedVersion(version)
+    ? []
+    : await retrieveRelevantMemories({
+        query: `${failureSignature}\n${trimmedBuildLog}\n${extractLatestPrompt(conversation)}`,
+        loader,
+        version,
+        type: 'build',
+        limit: 3,
+      });
 
   // Build a concise history of what was already tried so the AI doesn't repeat itself.
   const attemptHistory = previousAttempts
@@ -862,7 +864,7 @@ async function loadBuildResearch(loader, version) {
 function buildRepairGuidance(loader, version) {
   if (loader === 'fabric') {
     if (isFabricNonObfuscatedVersion(version)) {
-      return 'For Fabric 26.x targets, assume the environment is non-obfuscated. Do not add mappings dependencies, and do not use old Yarn-era remap assumptions. For blocks and block items, set registryKey(...) on AbstractBlock.Settings and Item.Settings before constructing the instances.';
+      return 'For Fabric 26.x targets, assume the environment is non-obfuscated. Do not add mappings dependencies, and do not use old Yarn-era remap assumptions. NEVER use Yarn-style package guesses like net.minecraft.block.*, net.minecraft.registry.*, or net.minecraft.util.Identifier unless you have verified they exist for this exact 26.x target. If the generated code uses those imports, replace them with the current 26.x official names or simplify the scaffold to code you know is valid. For blocks and block items, set registryKey(...) on AbstractBlock.Settings and Item.Settings before constructing the instances.';
     }
     return `For this Fabric target, assume the project uses Yarn mappings. Prefer Yarn-style Minecraft imports, use Identifier.of(namespace, path) instead of new Identifier(...), and prefer Item.Settings and AbstractBlock.Settings.copy(...) over outdated FabricItemSettings or FabricBlockSettings helpers.${usesModernFabricRegistryKeys(version) ? ' For modern Fabric block and block-item registration, set registryKey(...) on AbstractBlock.Settings and Item.Settings before constructing the instances.' : ''}`;
   }

@@ -47,6 +47,7 @@ async function researchMsg(loader, version) {
   if (loader === 'fabric' && mode === 'none') {
     lines.push(`Fabric ${version} (26.1+) is non-obfuscated. Use official deobfuscated names, not Yarn-era tutorial imports.`);
     lines.push('Fabric API 26.1 renamed many APIs. Avoid guessing biome/worldgen imports - prefer a smaller safe scaffold.');
+    lines.push('NEVER assume Yarn packages like net.minecraft.block.*, net.minecraft.registry.*, or net.minecraft.util.Identifier exist on Fabric 26.x unless verified for the exact target.');
   }
   if ((loader === 'forge' || loader === 'neoforge') && /^1\.21|^26\./.test(String(version||''))) {
     lines.push(`${loader} ${version}: use official Mojang mapping names only. Do not mix Fabric/Yarn imports.`);
@@ -80,13 +81,15 @@ export default async function handler(req) {
 
   const model = body.model || process.env.MISTRAL_MODEL || 'codestral-latest';
   const latestUserMessage = [...body.messages].reverse().find(message => message?.role === 'user')?.content || '';
-  const siteMemories = await retrieveRelevantMemories({
-    query: latestUserMessage,
-    loader: body.loader,
-    version: body.version,
-    type: 'chat',
-    limit: 3,
-  });
+  const siteMemories = body.loader === 'fabric' && isFabricNonObfuscated(body.version)
+    ? []
+    : await retrieveRelevantMemories({
+        query: latestUserMessage,
+        loader: body.loader,
+        version: body.version,
+        type: 'chat',
+        limit: 3,
+      });
   const extra = await researchMsg(body.loader, body.version);
   const memoryMessage = siteMemories.length
     ? {
