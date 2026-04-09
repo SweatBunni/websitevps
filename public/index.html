@@ -1225,19 +1225,16 @@ ${v.slice(v.length - tail)}`;
 
 function buildModelMessages(messages) {
   const all = Array.isArray(messages) ? messages : [];
-  const system = all.find(m => m.role === 'system') || { role: 'system', content: state.systemPrompt || DEFAULT_SYSTEM };
-  const conv = all.filter(m => m.role !== 'system');
+  const conv = all.filter(m => m.role === 'user' || m.role === 'assistant');
   let recent = conv.slice(-CHAT_CTX_MSGS).map(m => ({
     role: m.role,
     content: truncateForModel(m.content, CHAT_CTX_PER_MSG),
   }));
-  let sysContent = String(system.content || state.systemPrompt || DEFAULT_SYSTEM);
-  if (conv.length > recent.length) sysContent += '\n\n[Earlier conversation omitted. Focus on recent messages only.]';
-  let req = [{ role: 'system', content: sysContent }, ...recent];
+  let req = [...recent];
   const total = () => req.reduce((s,m) => s + String(m.content||'').length, 0);
   while (total() > CHAT_CTX_TOTAL && recent.length > 3) {
     recent.shift();
-    req = [{ role: 'system', content: sysContent }, ...recent];
+    req = [...recent];
   }
   return req;
 }
@@ -1557,8 +1554,7 @@ async function sendMessage() {
 
   const loader = getSelectedLoader();
   const version = getSelectedVersion();
-  const taggedText = `${buildTargetContext(loader, version)}\n\n[User request]\n${text}`;
-  chat.messages.push({ role: 'user', content: taggedText });
+  chat.messages.push({ role: 'user', content: text });
 
   // Lock loader/version to this chat on first real message
   if (!chat.loader) {

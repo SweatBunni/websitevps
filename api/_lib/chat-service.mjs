@@ -1,5 +1,4 @@
-import { getBuildResearch } from './research-metadata.mjs';
-import { rememberChatInteraction, retrieveRelevantMemories } from './site-memory.mjs';
+import { rememberChatInteraction } from './site-memory.mjs';
 
 const DEFAULT_MODEL = 'qwen/qwen-2.5-coder-32b-instruct:free';
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
@@ -10,18 +9,23 @@ const NORMALIZED_CHUNK_SIZE = 320;
 
 export async function buildChatRequest({ body }) {
   const latestUserMessage = getLatestUserMessage(body.messages);
-  const [researchMessage, memoryMessage] = await Promise.all([
-    createResearchMessage(body.loader, body.version),
-    createMemoryMessage(body.loader, body.version, latestUserMessage),
-  ]);
-
-  const baseMessages = Array.isArray(body.messages)
-    ? body.messages.filter(message => ['system', 'user', 'assistant'].includes(message?.role))
+  const conversation = Array.isArray(body.messages)
+    ? body.messages
+        .filter(message => message && (message.role === 'user' || message.role === 'assistant'))
+        .map(message => ({
+          role: message.role,
+          content: String(message.content || '').trim(),
+        }))
+        .filter(message => message.content)
     : [];
-  const injectedMessages = [researchMessage, memoryMessage].filter(Boolean);
-  const messages = injectedMessages.length
-    ? [baseMessages[0], ...injectedMessages, ...baseMessages.slice(1)]
-    : baseMessages;
+
+  const messages = [
+    {
+      role: 'system',
+      content: buildMinimalSystemPrompt(body.loader, body.version),
+    },
+    ...conversation,
+  ];
 
   return {
     latestUserMessage,
@@ -227,104 +231,28 @@ function getLatestUserMessage(messages) {
     .find(message => message?.role === 'user')?.content || '';
 }
 
-async function createResearchMessage(loader, version) {
-  const lines = [];
-  const mappingMode = getMappingMode(loader, version);
-  const researchedBuild = await loadBuildResearch(loader, version);
+function buildMinimalSystemPrompt(loader, version) {
+  const lines = [
+    'You are a helpful coding assistant for Minecraft modding and plugins.',
+    'Answer clearly and directly.',
+    'If you provide code, keep it valid for the requested loader and version.',
+    'Do not invent APIs, package names, or dependencies.',
+  ];
 
-  if (loader === 'fabric' && mappingMode === 'yarn') {
-    lines.push(`Fabric ${version} uses Yarn mappings. Use net.minecraft.block.*, net.minecraft.item.*, net.minecraft.registry.*, net.minecraft.util.Identifier.`);
-    lines.push('For modern Fabric/Yarn targets, use Identifier.of(namespace, path) or Identifier.of(fullId).');
-    lines.push('Prefer Item.Settings and AbstractBlock.Settings.copy(...).');
-    if (usesModernFabricRegistryKeys(version)) {
-      lines.push('For modern Fabric blocks and block items, set registryKey(...) on AbstractBlock.Settings and Item.Settings before constructing instances.');
-    }
+  if (loader && version) {
+    lines.push(`Target loader: ${loader}.`);
+    lines.push(`Target version: ${version}.`);
   }
 
-  if (loader === 'fabric' && mappingMode === 'none') {
-    lines.push(`Fabric ${version} is non-obfuscated. Use official names, not Yarn-era imports.`);
-    lines.push('Do not assume net.minecraft.block.*, net.minecraft.registry.*, or net.minecraft.util.Identifier exist unless verified for this exact target.');
-  }
-
-  if ((loader === 'forge' || loader === 'neoforge') && /^(1\.21|26\.)/.test(String(version || ''))) {
-    lines.push(`${loader} ${version}: use official Mojang mapping names only. Do not mix Fabric/Yarn imports.`);
-  }
-
-  if (loader === 'paper') {
-    lines.push(`Paper ${version}: use https://repo.papermc.io/repository/maven-public/ and avoid the old papermc.io repository URL.`);
-  }
-
-  if (researchedBuild) {
-    lines.push(formatResearchedVersions(loader, researchedBuild));
-  }
-
-  if (!lines.length) {
-    return null;
-  }
-
-  lines.push('Never invent package names, imports, APIs, or version numbers.');
-  return { role: 'system', content: lines.join('\n') };
-}
-
-async function createMemoryMessage(loader, version, latestUserMessage) {
-  if (!latestUserMessage || (loader === 'fabric' && isFabricNonObfuscated(version))) {
-    return null;
-  }
-
-  const memories = await retrieveRelevantMemories({
-    query: latestUserMessage,
-    loader,
-    version,
-    type: 'chat',
-    limit: 3,
-  });
-
-  if (!memories.length) {
-    return null;
-  }
-
-  return {
-    role: 'system',
-    content: `Relevant prior site memory:\n${memories.map(memory => `- ${memory.text}`).join('\n')}\nUse these only as hints. Prefer the current prompt and researched metadata when they conflict.`,
-  };
-}
-
-async function loadBuildResearch(loader, version) {
-  if (!['fabric', 'forge', 'neoforge'].includes(loader)) {
-    return null;
-  }
-
-  try {
-    return (await getBuildResearch(loader, version))?.build || null;
-  } catch {
-    return null;
-  }
-}
-
-function getMappingMode(loader, version) {
-  if (loader !== 'fabric') {
-    return 'official';
-  }
-  return isFabricNonObfuscated(version) ? 'none' : 'yarn';
-}
-
-function formatResearchedVersions(loader, build) {
   if (loader === 'fabric') {
-    return `Use researched versions where relevant: loader ${build.loaderVersion}, loom ${build.loomVersion}, Gradle ${build.gradleVersion}${build.yarnVersion ? `, Yarn ${build.yarnVersion}` : ''}${build.fabricApiVersion ? `, Fabric API ${build.fabricApiVersion}` : ''}.`;
+    lines.push('Prefer Fabric-compatible code and mappings for the selected Fabric target.');
   }
-  if (loader === 'forge') {
-    return `Use researched versions where relevant: Forge ${build.forgeVersion}, ForgeGradle ${build.forgeGradleVersion}, Gradle ${build.gradleVersion}, toolchain resolver ${build.toolchainResolverVersion}.`;
+  if (loader === 'forge' || loader === 'neoforge') {
+    lines.push('Use official Mojang-named APIs for modern Forge/NeoForge targets unless the conversation clearly requires otherwise.');
   }
-  if (loader === 'neoforge') {
-    return `Use researched versions where relevant: NeoForge ${build.neoforgeVersion}, userdev plugin ${build.userdevVersion}, Gradle ${build.gradleVersion}.`;
+  if (loader === 'paper') {
+    lines.push('Use Paper-compatible plugin code.');
   }
-  return '';
-}
 
-function isFabricNonObfuscated(version) {
-  return /^26\./.test(String(version || ''));
-}
-
-function usesModernFabricRegistryKeys(version) {
-  return /^1\.21\.(?:2|3|4|10|11)$/.test(String(version || '')) || isFabricNonObfuscated(version);
+  return lines.join('\n');
 }
