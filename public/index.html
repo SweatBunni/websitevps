@@ -2633,8 +2633,6 @@ function normalizeBuildFile(p, d) {
 function shouldIncludeInSourceArchive() { return true; }
 function makeDownloadLink(blob, fileName) { return { url: URL.createObjectURL(blob), fileName }; }
 
-}
-
 function renderBuildAttemptLines(logEl, attempts) {
   if (!Array.isArray(attempts)) return;
   attempts.forEach(a => {
