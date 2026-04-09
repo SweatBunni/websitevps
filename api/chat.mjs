@@ -17,8 +17,7 @@ function usesModernFabricRegistryKeys(v) { return /^1\\.21\\.(?:2|3|4|10|11)$/.t
 function mappingMode(loader, version) {
   if (loader === 'fabric') {
     if (isFabricNonObfuscated(version)) return 'none';
-    if (isModernFabricYarn(version)) return 'yarn';
-    return 'official';
+    return 'yarn';
   }
   return 'official';
 }

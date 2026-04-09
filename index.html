@@ -947,7 +947,7 @@ Include import statements. Explain your code clearly.
 Always respect the selected loader and Minecraft version.
 Only use imports, mappings, classes, and methods that actually exist for that target.
 Follow the selected target's mappings mode and loader conventions exactly.
-For Fabric targets where CodexMC scaffolds Yarn mappings, use Yarn-style Minecraft imports there.
+For Fabric targets, use Yarn mappings and Yarn-style Minecraft imports by default unless the selected target is a non-obfuscated Fabric 26.x environment.
 For modern Fabric/Yarn targets such as 1.21.x, do not use new Identifier(...); use Identifier.of(namespace, path) or Identifier.of(fullId) instead.
 For modern Yarn-based Fabric targets, prefer \`Item.Settings\` and \`AbstractBlock.Settings.copy(...)\` over outdated helper classes like \`FabricItemSettings\` or \`FabricBlockSettings\`.
 For modern Fabric blocks and block items, set \`registryKey(...)\` on \`AbstractBlock.Settings\` and \`Item.Settings\` before constructing the instances.
@@ -1725,7 +1725,7 @@ const DEFAULT_FABRIC_BUILD_DATA = {
   loomVersion: '1.14.10',
   loaderVersion: '0.18.2',
   fabricApiVersion: null,
-  mappingMode: 'official',
+  mappingMode: 'yarn',
   yarnVersion: null,
   gradleVersion: '9.3.0',
 };
@@ -1799,6 +1799,16 @@ function getForgeBuildData(version) {
 function getNeoForgeBuildData(version) {
   return { ...DEFAULT_NEOFORGE_BUILD_DATA, ...(RESEARCHED_NEOFORGE_BUILD_DATA[version] || {}) };
 }
+function getFabricYarnFallback(version) {
+  const key = String(version || '');
+  if (key === '1.21.11') return '1.21.11+build.4';
+  if (key === '1.21.10') return '1.21.10+build.3';
+  if (key === '1.21.4') return '1.21.4+build.8';
+  if (key === '1.21.2') return '1.21.2+build.1';
+  if (key === '1.21.1') return '1.21.1+build.3';
+  if (key === '1.21') return '1.21+build.9';
+  return null;
+}
 function isValidYarnVersion(version) {
   return /^\d+\.\d+(?:\.\d+)?\+build\.\d+$/.test(String(version || ''));
 }
@@ -1806,9 +1816,9 @@ function isFabricNonObfuscatedVersion(version) { return /^26\./.test(String(vers
 function getTargetMappingMode(loader, version) {
   if (loader === 'fabric') {
     const f = getFabricBuildData(version);
-    if (f.mappingMode === 'yarn' && isValidYarnVersion(f.yarnVersion)) return 'yarn';
     if (f.mappingMode === 'none') return 'none';
-    return 'official';
+    if (isValidYarnVersion(f.yarnVersion) || isValidYarnVersion(getFabricYarnFallback(version)) || f.mappingMode === 'yarn') return 'yarn';
+    return 'yarn';
   }
   if (loader === 'forge' || loader === 'neoforge') return 'official';
   return 'official';
@@ -2035,7 +2045,7 @@ org.gradle.parallel=true
 minecraft_version=${version}
 loader_version=${fabric.loaderVersion}
 loom_version=${fabric.loomVersion}
-yarn_mappings=${isValidYarnVersion(fabric.yarnVersion) ? fabric.yarnVersion : ''}
+yarn_mappings=${isValidYarnVersion(fabric.yarnVersion) ? fabric.yarnVersion : (getFabricYarnFallback(version) || '')}
 mod_version=1.0.0
 java_version=${javaVersion}
 maven_group=com.minecraftmod

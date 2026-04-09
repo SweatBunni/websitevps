@@ -39,6 +39,7 @@ export async function executeBuildJob({ apiKey, loader, version, modName, files,
   let stuckRepairRounds = 0;
   let previousLogTail = null;
   let previousRepairFingerprint = null;
+  let previousRepairSummary = null;
   let repeatedFailureSignatureRounds = 0;
 
   for (let attemptNumber = 1; attemptNumber <= MAX_BUILD_ATTEMPTS; attemptNumber += 1) {
@@ -185,7 +186,9 @@ export async function executeBuildJob({ apiKey, loader, version, modName, files,
     await notifyAttempt(onAttempt, attempts, projectFiles);
 
     const repeatedFingerprint = previousRepairFingerprint && attempt.repairFingerprint === previousRepairFingerprint;
+    const repeatedSummary = previousRepairSummary !== null && attempt.fixSummary === previousRepairSummary;
     previousRepairFingerprint = attempt.repairFingerprint;
+    previousRepairSummary = attempt.fixSummary;
 
     if (changedFiles.length === 0 || logUnchanged || repeatedFingerprint) {
       stuckRepairRounds += 1;
@@ -209,9 +212,19 @@ export async function executeBuildJob({ apiKey, loader, version, modName, files,
           buildLogTail: attempt.logTail,
         };
       }
-    } else {
-      // Progress was made — reset the stuck counter.
-      stuckRepairRounds = 0;
+      } else {
+        // Progress was made — reset the stuck counter.
+        stuckRepairRounds = 0;
+      }
+
+    if (repeatedFailureSignatureRounds >= 1 && repeatedSummary && changedFiles.length === 0) {
+      return {
+        success: false,
+        message: `Build repair stopped early because the same failure repeated and the AI returned the same repair summary without changing files. Last repair summary: ${attempt.fixSummary}.`,
+        attempts,
+        files: projectFiles,
+        buildLogTail: attempt.logTail,
+      };
     }
 
     if (repeatedFailureSignatureRounds >= 2 && repeatedFingerprint) {
@@ -848,13 +861,10 @@ async function loadBuildResearch(loader, version) {
 
 function buildRepairGuidance(loader, version) {
   if (loader === 'fabric') {
-    if (isModernFabricYarnVersion(version)) {
-      return `For this Fabric target, assume the project uses Yarn mappings. Prefer Yarn-style Minecraft imports, use Identifier.of(namespace, path) instead of new Identifier(...), and prefer Item.Settings and AbstractBlock.Settings.copy(...) over outdated FabricItemSettings or FabricBlockSettings helpers.${usesModernFabricRegistryKeys(version) ? ' For modern Fabric block and block-item registration, set registryKey(...) on AbstractBlock.Settings and Item.Settings before constructing the instances.' : ''}`;
-    }
     if (isFabricNonObfuscatedVersion(version)) {
       return 'For Fabric 26.x targets, assume the environment is non-obfuscated. Do not add mappings dependencies, and do not use old Yarn-era remap assumptions. For blocks and block items, set registryKey(...) on AbstractBlock.Settings and Item.Settings before constructing the instances.';
     }
-    return 'For this Fabric target, respect the generated mappings mode exactly and do not mix Yarn names into an official-mappings build or vice versa.';
+    return `For this Fabric target, assume the project uses Yarn mappings. Prefer Yarn-style Minecraft imports, use Identifier.of(namespace, path) instead of new Identifier(...), and prefer Item.Settings and AbstractBlock.Settings.copy(...) over outdated FabricItemSettings or FabricBlockSettings helpers.${usesModernFabricRegistryKeys(version) ? ' For modern Fabric block and block-item registration, set registryKey(...) on AbstractBlock.Settings and Item.Settings before constructing the instances.' : ''}`;
   }
   if (loader === 'forge') {
     const isModern = isModernForgeVersion(version);
@@ -1021,13 +1031,24 @@ function normalizeFabricBuildGradle(content, version, researchedBuild = null, ne
 
 function getNormalizedFabricMappingMode(version, researchedBuild = null) {
   if (isFabricNonObfuscatedVersion(version)) return 'none';
-  const yarnVersion = researchedBuild?.yarnVersion;
+  const yarnVersion = researchedBuild?.yarnVersion || getFabricYarnFallback(version);
   if (isValidYarnVersion(yarnVersion)) return 'yarn';
-  return 'official';
+  return 'yarn';
 }
 
 function isValidYarnVersion(version) {
   return /^\d+\.\d+(?:\.\d+)?\+build\.\d+$/.test(String(version || ''));
+}
+
+function getFabricYarnFallback(version) {
+  const key = String(version || '');
+  if (key === '1.21.11') return '1.21.11+build.4';
+  if (key === '1.21.10') return '1.21.10+build.3';
+  if (key === '1.21.4') return '1.21.4+build.8';
+  if (key === '1.21.2') return '1.21.2+build.1';
+  if (key === '1.21.1') return '1.21.1+build.3';
+  if (key === '1.21') return '1.21+build.9';
+  return null;
 }
 
 function normalizeFabricGradleProperties(content, researchedBuild = null, needsFabricApi = false) {

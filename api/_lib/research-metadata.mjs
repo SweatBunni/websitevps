@@ -31,9 +31,18 @@ const FABRIC_BUILD_FALLBACK = {
   loomVersion: '1.14.10',
   loaderVersion: '0.18.2',
   fabricApiVersion: null,
-  mappingMode: 'official',
+  mappingMode: 'yarn',
   yarnVersion: null,
   gradleVersion: '9.3.0',
+};
+
+const FABRIC_YARN_FALLBACKS = {
+  '1.21.11': '1.21.11+build.4',
+  '1.21.10': '1.21.10+build.3',
+  '1.21.4': '1.21.4+build.8',
+  '1.21.2': '1.21.2+build.1',
+  '1.21.1': '1.21.1+build.3',
+  '1.21': '1.21+build.9',
 };
 
 const FORGE_BUILD_FALLBACK = {
@@ -198,9 +207,10 @@ async function fetchFabricBuildResearch(version) {
   const fabricApiVersion = pickLatestFabricApiVersion(apiVersions, version);
   const loomVersion = pickLatestStable(loomVersions) || FABRIC_BUILD_FALLBACK.loomVersion;
   const yarnVersion = pickLatestYarnVersion(yarnEntries, version, parseMavenVersions(yarnMetadataXml));
+  const resolvedYarnVersion = yarnVersion || getFabricYarnFallback(version);
   const mappingMode = /^26\./.test(String(version || ''))
     ? 'none'
-    : (yarnVersion ? 'yarn' : FABRIC_BUILD_FALLBACK.mappingMode);
+    : (resolvedYarnVersion ? 'yarn' : FABRIC_BUILD_FALLBACK.mappingMode);
   const gradleVersion = pickGradleVersion(gradleVersions, { major: 9 }) || FABRIC_BUILD_FALLBACK.gradleVersion;
 
   return {
@@ -209,7 +219,7 @@ async function fetchFabricBuildResearch(version) {
     fabricApiVersion: fabricApiVersion || null,
     loomVersion,
     mappingMode,
-    yarnVersion: yarnVersion || null,
+    yarnVersion: resolvedYarnVersion || null,
     gradleVersion,
   };
 }
@@ -356,6 +366,10 @@ function pickLatestYarnVersion(entries, minecraftVersion, metadataVersions = [])
       .filter(version => /^\d+\.\d+(?:\.\d+)?\+build\.\d+$/.test(String(version))),
   );
   return versions[0] || null;
+}
+
+function getFabricYarnFallback(minecraftVersion) {
+  return FABRIC_YARN_FALLBACKS[String(minecraftVersion || '')] || null;
 }
 
 function pickLatestForgeForGame(versions, minecraftVersion) {
