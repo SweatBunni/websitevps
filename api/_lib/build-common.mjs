@@ -514,10 +514,9 @@ async function requestBuildFix({ apiKey, loader, version, modName, conversation,
     .map(a => ({ attempt: a.attempt, summary: a.fixSummary, changedFiles: a.changedFiles || [] }));
 
   const requestBody = {
-    model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514',
+    model: process.env.OPENROUTER_MODEL || 'qwen/qwen3.6-plus',
     temperature: 0.1,
     max_tokens: 3000,
-
     messages: [
       {
         role: 'system',
@@ -569,12 +568,13 @@ async function requestBuildFix({ apiKey, loader, version, modName, conversation,
   let responseJson = {};
   let lastErrorMessage = 'AI repair request failed.';
   for (let retryIndex = 0; retryIndex < MAX_AI_REPAIR_RETRIES; retryIndex += 1) {
-    const upstreamResponse = await fetch('https://api.anthropic.com/v1/messages', {
+    const upstreamResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
+        Authorization: `Bearer ${apiKey}`,
+        'HTTP-Referer': process.env.OPENROUTER_HTTP_REFERER || 'http://localhost:3000',
+        'X-Title': process.env.OPENROUTER_APP_TITLE || 'CodexMC',
       },
       body: JSON.stringify(requestBody),
     });
@@ -587,7 +587,7 @@ async function requestBuildFix({ apiKey, loader, version, modName, conversation,
     }
 
     if (upstreamResponse.ok) {
-      const content = responseJson.content?.[0]?.text;
+      const content = responseJson.choices?.[0]?.message?.content;
       const parsed = parseJsonContent(content);
       if (!parsed || !Array.isArray(parsed.files)) {
         throw new Error('AI repair response did not include a valid files array.');

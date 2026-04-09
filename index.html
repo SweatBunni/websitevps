@@ -1580,7 +1580,7 @@ async function sendMessage() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'codestral-latest',
+        model: 'qwen/qwen3.6-plus',
         messages: buildModelMessages(chat.messages),
         loader, version,
         max_tokens: 4096,

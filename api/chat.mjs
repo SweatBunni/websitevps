@@ -8,9 +8,9 @@ export default async function handler(request) {
     return methodNotAllowed();
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
-    return jsonResponse({ message: 'Server is missing ANTHROPIC_API_KEY.' }, { status: 500 });
+    return jsonResponse({ message: 'Server is missing OPENROUTER_API_KEY.' }, { status: 500 });
   }
 
   const parsedBody = await parseJsonRequest(request);
@@ -23,7 +23,7 @@ export default async function handler(request) {
     return jsonResponse({ message: 'A non-empty messages array is required.' }, { status: 400 });
   }
 
-  const { latestUserMessage, messages, systemPrompt } = await buildChatMessages({
+  const { latestUserMessage, messages } = await buildChatMessages({
     messages: body.messages,
     loader: body.loader,
     version: body.version,
@@ -33,7 +33,6 @@ export default async function handler(request) {
     apiKey,
     body,
     messages,
-    systemPrompt,
   });
 
   if (!upstream.ok) {

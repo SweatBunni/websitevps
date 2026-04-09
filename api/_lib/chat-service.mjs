@@ -1,8 +1,8 @@
 import { getBuildResearch } from './research-metadata.mjs';
 import { rememberChatInteraction, retrieveRelevantMemories } from './site-memory.mjs';
 
-const DEFAULT_MODEL = 'claude-sonnet-4-20250514';
-const UPSTREAM_URL = 'https://api.anthropic.com/v1/messages';
+const DEFAULT_MODEL = 'qwen/qwen3.6-plus';
+const UPSTREAM_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 export async function buildChatMessages({ messages, loader, version }) {
   const latestUserMessage = getLatestUserMessage(messages);
@@ -11,18 +11,14 @@ export async function buildChatMessages({ messages, loader, version }) {
     createMemoryMessage(loader, version, latestUserMessage),
   ]);
 
-  // Anthropic uses a system string, not a system message in the array.
-  // We collect injected context into a system string and keep messages as user/assistant only.
-  const injectedLines = [researchMessage, memoryMessage].filter(Boolean).map(m => m.content);
-  const systemPrompt = injectedLines.length ? injectedLines.join('\n\n') : null;
-
-  // Filter out any existing system messages from the messages array for Anthropic
-  const filteredMessages = messages.filter(m => m.role !== 'system');
+  const injectedMessages = [researchMessage, memoryMessage].filter(Boolean);
+  const filteredMessages = messages.filter(message => ['system', 'user', 'assistant'].includes(message?.role));
 
   return {
     latestUserMessage,
-    messages: filteredMessages,
-    systemPrompt,
+    messages: injectedMessages.length
+      ? [filteredMessages[0], ...injectedMessages, ...filteredMessages.slice(1)]
+      : filteredMessages,
   };
 }
 
@@ -30,19 +26,15 @@ export async function requestStreamingChatCompletion({
   apiKey,
   body,
   messages,
-  systemPrompt,
 }) {
-  const model = body.model || process.env.ANTHROPIC_MODEL || DEFAULT_MODEL;
-
+  const model = body.model || process.env.OPENROUTER_MODEL || DEFAULT_MODEL;
   const requestBody = {
     model,
     messages,
     max_tokens: body.max_tokens || 4096,
+    temperature: body.temperature ?? 0.2,
     stream: true,
   };
-  if (systemPrompt) {
-    requestBody.system = systemPrompt;
-  }
 
   const MAX_CHAT_RETRIES = 4;
   let upstream;
@@ -51,8 +43,9 @@ export async function requestStreamingChatCompletion({
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
+        Authorization: `Bearer ${apiKey}`,
+        'HTTP-Referer': process.env.OPENROUTER_HTTP_REFERER || 'http://localhost:3000',
+        'X-Title': process.env.OPENROUTER_APP_TITLE || 'CodexMC',
       },
       body: JSON.stringify(requestBody),
     });
@@ -229,8 +222,6 @@ function formatResearchedVersions(loader, build) {
   return '';
 }
 
-// Anthropic uses server-sent events with a different format than Mistral.
-// Events: message_start, content_block_start, content_block_delta, content_block_stop, message_stop
 async function streamUpstreamChunks({ upstream, writer, encoder, onDelta, onDone }) {
   const reader = upstream.body.getReader();
   const decoder = new TextDecoder();
@@ -260,25 +251,14 @@ async function streamUpstreamChunks({ upstream, writer, encoder, onDelta, onDone
           continue;
         }
 
-        // Extract model from message_start event
-        if (chunk.type === 'message_start' && chunk.message?.model) {
-          usedModel = chunk.message.model;
+        if (chunk.model) {
+          usedModel = chunk.model;
         }
 
-        // Extract text delta from content_block_delta event
-        if (chunk.type === 'content_block_delta' && chunk.delta?.type === 'text_delta') {
-          const delta = chunk.delta.text;
-          if (delta) {
-            onDelta(delta, usedModel);
-            await writer.write(encoder.encode(`data: ${JSON.stringify({ delta, model: usedModel })}\n\n`));
-          }
-        }
-
-        // Signal completion
-        if (chunk.type === 'message_stop') {
-          await writer.write(encoder.encode(`data: ${JSON.stringify({ done: true, model: usedModel })}\n\n`));
-          await onDone();
-          return;
+        const delta = chunk.choices?.[0]?.delta?.content;
+        if (delta) {
+          onDelta(delta, usedModel);
+          await writer.write(encoder.encode(`data: ${JSON.stringify({ delta, model: usedModel })}\n\n`));
         }
       }
     }
