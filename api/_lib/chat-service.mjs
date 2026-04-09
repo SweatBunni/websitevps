@@ -1,8 +1,8 @@
 import { getBuildResearch } from './research-metadata.mjs';
 import { rememberChatInteraction, retrieveRelevantMemories } from './site-memory.mjs';
 
-const DEFAULT_MODEL = 'codestral-latest';
-const UPSTREAM_URL = 'https://api.mistral.ai/v1/chat/completions';
+const DEFAULT_MODEL = 'claude-sonnet-4-20250514';
+const UPSTREAM_URL = 'https://api.anthropic.com/v1/messages';
 
 export async function buildChatMessages({ messages, loader, version }) {
   const latestUserMessage = getLatestUserMessage(messages);
@@ -11,12 +11,18 @@ export async function buildChatMessages({ messages, loader, version }) {
     createMemoryMessage(loader, version, latestUserMessage),
   ]);
 
-  const injectedMessages = [researchMessage, memoryMessage].filter(Boolean);
+  // Anthropic uses a system string, not a system message in the array.
+  // We collect injected context into a system string and keep messages as user/assistant only.
+  const injectedLines = [researchMessage, memoryMessage].filter(Boolean).map(m => m.content);
+  const systemPrompt = injectedLines.length ? injectedLines.join('\n\n') : null;
+
+  // Filter out any existing system messages from the messages array for Anthropic
+  const filteredMessages = messages.filter(m => m.role !== 'system');
+
   return {
     latestUserMessage,
-    messages: injectedMessages.length
-      ? [messages[0], ...injectedMessages, ...messages.slice(1)]
-      : messages,
+    messages: filteredMessages,
+    systemPrompt,
   };
 }
 
@@ -24,22 +30,43 @@ export async function requestStreamingChatCompletion({
   apiKey,
   body,
   messages,
+  systemPrompt,
 }) {
-  const model = body.model || process.env.MISTRAL_MODEL || DEFAULT_MODEL;
-  const upstream = await fetch(UPSTREAM_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      messages,
-      max_tokens: body.max_tokens || 4096,
-      temperature: body.temperature ?? 0.2,
-      stream: true,
-    }),
-  });
+  const model = body.model || process.env.ANTHROPIC_MODEL || DEFAULT_MODEL;
+
+  const requestBody = {
+    model,
+    messages,
+    max_tokens: body.max_tokens || 4096,
+    stream: true,
+  };
+  if (systemPrompt) {
+    requestBody.system = systemPrompt;
+  }
+
+  const MAX_CHAT_RETRIES = 4;
+  let upstream;
+  for (let i = 0; i < MAX_CHAT_RETRIES; i++) {
+    upstream = await fetch(UPSTREAM_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    if (upstream.status !== 429 && upstream.status !== 503) break;
+    if (i === MAX_CHAT_RETRIES - 1) break;
+
+    const retryAfter = upstream.headers.get('retry-after');
+    const seconds = retryAfter ? Number(retryAfter) : null;
+    const backoffMs = (Number.isFinite(seconds) && seconds > 0)
+      ? Math.round(seconds * 1000)
+      : Math.min(30000, 5000 * (i + 1));
+    await new Promise(resolve => setTimeout(resolve, backoffMs));
+  }
 
   return { model, upstream };
 }
@@ -97,8 +124,8 @@ export async function readUpstreamError(upstream) {
     json = {};
   }
 
-  return json?.message
-    || json?.error?.message
+  return json?.error?.message
+    || json?.message
     || json?.error
     || text
     || `HTTP ${upstream.status}`;
@@ -202,6 +229,8 @@ function formatResearchedVersions(loader, build) {
   return '';
 }
 
+// Anthropic uses server-sent events with a different format than Mistral.
+// Events: message_start, content_block_start, content_block_delta, content_block_stop, message_stop
 async function streamUpstreamChunks({ upstream, writer, encoder, onDelta, onDone }) {
   const reader = upstream.body.getReader();
   const decoder = new TextDecoder();
@@ -211,9 +240,7 @@ async function streamUpstreamChunks({ upstream, writer, encoder, onDelta, onDone
   try {
     while (true) {
       const { done, value } = await reader.read();
-      if (done) {
-        break;
-      }
+      if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n');
@@ -221,25 +248,38 @@ async function streamUpstreamChunks({ upstream, writer, encoder, onDelta, onDone
 
       for (const line of lines) {
         const trimmed = line.trim();
-        if (!trimmed || trimmed === 'data: [DONE]' || !trimmed.startsWith('data:')) {
-          continue;
-        }
+        if (!trimmed || !trimmed.startsWith('data:')) continue;
+
+        const dataStr = trimmed.slice(5).trim();
+        if (dataStr === '[DONE]') continue;
 
         let chunk;
         try {
-          chunk = JSON.parse(trimmed.slice(5).trim());
+          chunk = JSON.parse(dataStr);
         } catch {
           continue;
         }
 
-        usedModel = chunk.model || usedModel;
-        const delta = chunk.choices?.[0]?.delta?.content;
-        if (!delta) {
-          continue;
+        // Extract model from message_start event
+        if (chunk.type === 'message_start' && chunk.message?.model) {
+          usedModel = chunk.message.model;
         }
 
-        onDelta(delta, usedModel);
-        await writer.write(encoder.encode(`data: ${JSON.stringify({ delta, model: usedModel })}\n\n`));
+        // Extract text delta from content_block_delta event
+        if (chunk.type === 'content_block_delta' && chunk.delta?.type === 'text_delta') {
+          const delta = chunk.delta.text;
+          if (delta) {
+            onDelta(delta, usedModel);
+            await writer.write(encoder.encode(`data: ${JSON.stringify({ delta, model: usedModel })}\n\n`));
+          }
+        }
+
+        // Signal completion
+        if (chunk.type === 'message_stop') {
+          await writer.write(encoder.encode(`data: ${JSON.stringify({ done: true, model: usedModel })}\n\n`));
+          await onDone();
+          return;
+        }
       }
     }
 

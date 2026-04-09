@@ -70,7 +70,7 @@ async function runResearchPhase(jobId, input, startedAt, existing) {
 
 async function runBuildPhase(jobId, input, startedAt, researchBundle) {
   return executeBuildJob({
-    apiKey: process.env.MISTRAL_API_KEY,
+    apiKey: process.env.ANTHROPIC_API_KEY,
     loader: input.loader,
     version: input.version,
     modName: input.modName,

@@ -18,7 +18,7 @@ import { rememberBuildOutcome, rememberResearchBundle, retrieveRelevantMemories 
 
 const MAX_BUILD_ATTEMPTS = 6;
 const MAX_REPAIR_ATTEMPTS_WITHOUT_PROGRESS = 3;
-const MAX_AI_REPAIR_RETRIES = 3;
+const MAX_AI_REPAIR_RETRIES = 6;
 const BUILD_TIMEOUT_MS = 7 * 60 * 1000;   // 7 min per Gradle run — allows multiple attempts within server limit
 const MAX_LOG_CHARS = 32000;
 const MAX_REPAIR_LOG_CHARS = 12000;
@@ -514,10 +514,10 @@ async function requestBuildFix({ apiKey, loader, version, modName, conversation,
     .map(a => ({ attempt: a.attempt, summary: a.fixSummary, changedFiles: a.changedFiles || [] }));
 
   const requestBody = {
-    model: process.env.MISTRAL_MODEL || 'codestral-latest',
+    model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514',
     temperature: 0.1,
     max_tokens: 3000,
-    stream: false,
+
     messages: [
       {
         role: 'system',
@@ -569,12 +569,12 @@ async function requestBuildFix({ apiKey, loader, version, modName, conversation,
   let responseJson = {};
   let lastErrorMessage = 'AI repair request failed.';
   for (let retryIndex = 0; retryIndex < MAX_AI_REPAIR_RETRIES; retryIndex += 1) {
-    const upstreamResponse = await fetch('https://api.mistral.ai/v1/chat/completions', {
+    const upstreamResponse = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-        Accept: 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify(requestBody),
     });
@@ -587,7 +587,7 @@ async function requestBuildFix({ apiKey, loader, version, modName, conversation,
     }
 
     if (upstreamResponse.ok) {
-      const content = responseJson.choices?.[0]?.message?.content;
+      const content = responseJson.content?.[0]?.text;
       const parsed = parseJsonContent(content);
       if (!parsed || !Array.isArray(parsed.files)) {
         throw new Error('AI repair response did not include a valid files array.');
@@ -605,7 +605,13 @@ async function requestBuildFix({ apiKey, loader, version, modName, conversation,
     }
 
     const retryAfterMs = parseRetryAfterMs(upstreamResponse.headers.get('retry-after'));
-    const backoffMs = retryAfterMs || (2000 * (retryIndex + 1));
+    // For 429 rate limit responses, use a much longer backoff — Mistral rate limit windows
+    // are typically 60s. If no retry-after header, use exponential backoff capped at 60s.
+    const is429 = upstreamResponse.status === 429;
+    const defaultBackoffMs = is429
+      ? Math.min(60000, 10000 * (retryIndex + 1))
+      : 2000 * (retryIndex + 1);
+    const backoffMs = retryAfterMs || defaultBackoffMs;
     await sleep(backoffMs);
   }
 
