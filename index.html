@@ -2806,6 +2806,18 @@ function createGeneratedProject(loader, version, modName, fullText) {
   return { files };
 }
 
+function getRequiredProjectFiles(loader) {
+  const required = ['build.gradle', 'settings.gradle', 'gradle.properties'];
+  if (loader === 'fabric') required.push('src/main/resources/fabric.mod.json');
+  if (loader === 'forge' || loader === 'neoforge') required.push('src/main/resources/META-INF/mods.toml');
+  return required;
+}
+
+function getMissingProjectFiles(loader, files) {
+  const normalized = new Set(Object.keys(files || {}).map(path => String(path || '').replace(/\\/g, '/')));
+  return getRequiredProjectFiles(loader).filter(path => !normalized.has(path));
+}
+
 async function startBuild(btn, fullText, customModName = '') {
   const prompt = btn.closest('.build-prompt');
   const loader = getSelectedLoader();
@@ -2814,6 +2826,7 @@ async function startBuild(btn, fullText, customModName = '') {
   const chat = getCurrentChat();
   const modName = resolveBuildModName(customModName, chat);
   const project = createGeneratedProject(loader, version, modName, fullText);
+  const missingFiles = getMissingProjectFiles(loader, project.files);
   const buildPayload = {
     loader,
     version,
@@ -2848,6 +2861,12 @@ async function startBuild(btn, fullText, customModName = '') {
   }
 
   addLine('Project files prepared from AI response.', 'done');
+  if (missingFiles.length) {
+    addLine(`Build stopped: the AI did not generate the required project files: ${missingFiles.join(', ')}`, 'error');
+    appendBuildLog(progress, 'What To Regenerate', `Ask the AI to regenerate the full ${loader} project and include these files explicitly:\n${missingFiles.join('\n')}`);
+    scrollToBottom();
+    return;
+  }
   const reqLine = addLine('Starting build worker on server...', 'running');
 
   function triggerWorker(jobId) {

@@ -12,6 +12,13 @@ function json(body, init = {}) {
   });
 }
 
+function getRequiredProjectFiles(loader) {
+  const required = ['build.gradle', 'settings.gradle', 'gradle.properties'];
+  if (loader === 'fabric') required.push('src/main/resources/fabric.mod.json');
+  if (loader === 'forge' || loader === 'neoforge') required.push('src/main/resources/META-INF/mods.toml');
+  return required;
+}
+
 export default async function handler(request) {
   if (request.method !== 'POST') {
     return json({ message: 'Method not allowed.' }, { status: 405 });
@@ -44,6 +51,15 @@ export default async function handler(request) {
     files = sanitizeFiles(payload.files);
   } catch (error) {
     return json({ message: error.message }, { status: 400 });
+  }
+
+  const normalizedPaths = new Set(Object.keys(files).map(relativePath => String(relativePath || '').replace(/\\/g, '/')));
+  const missingFiles = getRequiredProjectFiles(loader).filter(relativePath => !normalizedPaths.has(relativePath));
+  if (missingFiles.length) {
+    return json({
+      message: `The AI response did not include the required project files for ${loader} ${version}: ${missingFiles.join(', ')}`,
+      missingFiles,
+    }, { status: 400 });
   }
 
   const jobId = crypto.randomUUID();
