@@ -714,7 +714,7 @@ async function normalizeGeneratedFiles(files, loader, version, researchedBuild =
 
   if (loader === 'fabric' && files['build.gradle']) {
     const normalized = normalizeFileData(files['build.gradle']);
-    const cleaned = normalizeFabricBuildGradle(stripUnsupportedFabricLoomSettings(normalized.content, version), version);
+    const cleaned = normalizeFabricBuildGradle(stripUnsupportedFabricLoomSettings(normalized.content, version), version, resolvedBuild);
     if (cleaned !== normalized.content) {
       files['build.gradle'] = { encoding: 'utf8', content: cleaned };
       changedFiles.push('build.gradle');
@@ -905,11 +905,18 @@ function stripUnsupportedFabricLoomSettings(content, version) {
   return next.trimEnd();
 }
 
-function normalizeFabricBuildGradle(content, version) {
+function normalizeFabricBuildGradle(content, version, researchedBuild = null) {
   let next = String(content || '');
-  if (version === '1.21.11') {
-    next = next.replace(/id\s+'net\.fabricmc\.fabric-loom'(?!-remap)/g, "id 'net.fabricmc.fabric-loom-remap'");
-    next = next.replace(/^\s*mappings\s+loom\.officialMojangMappings\(\)\s*(?:\r?\n|$)/gm, '');
+  const mappingMode = getNormalizedFabricMappingMode(version, researchedBuild);
+  next = next.replace(/id\s+'net\.fabricmc\.fabric-loom-remap'/g, "id 'net.fabricmc.fabric-loom'");
+  next = next.replace(/id\s+'fabric-loom'/g, "id 'net.fabricmc.fabric-loom'");
+  next = next.replace(/\bid\s+"net\.fabricmc\.fabric-loom-remap"/g, 'id "net.fabricmc.fabric-loom"');
+  next = next.replace(/\bid\s+"fabric-loom"/g, 'id "net.fabricmc.fabric-loom"');
+
+  next = next.replace(/^\s*mappings\s+"net\.fabricmc:yarn:[^"\r\n]*"\s*(?:\r?\n|$)/gm, '');
+  next = next.replace(/^\s*mappings\s+loom\.officialMojangMappings\(\)\s*(?:\r?\n|$)/gm, '');
+
+  if (mappingMode === 'yarn') {
     if (!/^\s*mappings\s+"net\.fabricmc:yarn:\$\{project\.yarn_mappings\}:v2"\s*$/m.test(next)) {
       next = next.replace(
         /(dependencies\s*\{\s*\r?\n\s*minecraft\s+"com\.mojang:minecraft:\\\$\{project\.minecraft_version\}"\s*\r?\n)/,
@@ -918,15 +925,32 @@ function normalizeFabricBuildGradle(content, version) {
     }
     next = next.replace(/\bimplementation\s+"net\.fabricmc:fabric-loader:/g, 'modImplementation "net.fabricmc:fabric-loader:');
     next = next.replace(/\bimplementation\s+"net\.fabricmc\.fabric-api:fabric-api:/g, 'modImplementation "net.fabricmc.fabric-api:fabric-api:');
+  } else if (mappingMode === 'official') {
+    if (!/^\s*mappings\s+loom\.officialMojangMappings\(\)\s*$/m.test(next)) {
+      next = next.replace(
+        /(dependencies\s*\{\s*\r?\n\s*minecraft\s+"com\.mojang:minecraft:\\\$\{project\.minecraft_version\}"\s*\r?\n)/,
+        `$1    mappings loom.officialMojangMappings()\n`,
+      );
+    }
   }
+
   if (isFabricNonObfuscatedVersion(version)) {
-    next = next.replace(/id\s+'net\.fabricmc\.fabric-loom-remap'/g, "id 'net.fabricmc.fabric-loom'");
-    next = next.replace(/id\s+'fabric-loom'/g, "id 'net.fabricmc.fabric-loom'");
     next = next.replace(/\bmodImplementation\b/g, 'implementation');
     next = next.replace(/\bmodCompileOnly\b/g, 'compileOnly');
     next = next.replace(/\bmodRuntimeOnly\b/g, 'runtimeOnly');
   }
   return next;
+}
+
+function getNormalizedFabricMappingMode(version, researchedBuild = null) {
+  if (isFabricNonObfuscatedVersion(version)) return 'none';
+  const yarnVersion = researchedBuild?.yarnVersion;
+  if (isValidYarnVersion(yarnVersion)) return 'yarn';
+  return 'official';
+}
+
+function isValidYarnVersion(version) {
+  return /^\d+\.\d+(?:\.\d+)?\+build\.\d+$/.test(String(version || ''));
 }
 
 function normalizeFabricJavaSource(content, version) {

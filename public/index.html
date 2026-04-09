@@ -1799,9 +1799,17 @@ function getForgeBuildData(version) {
 function getNeoForgeBuildData(version) {
   return { ...DEFAULT_NEOFORGE_BUILD_DATA, ...(RESEARCHED_NEOFORGE_BUILD_DATA[version] || {}) };
 }
+function isValidYarnVersion(version) {
+  return /^\d+\.\d+(?:\.\d+)?\+build\.\d+$/.test(String(version || ''));
+}
 function isFabricNonObfuscatedVersion(version) { return /^26\./.test(String(version||'')); }
 function getTargetMappingMode(loader, version) {
-  if (loader === 'fabric') { const f = getFabricBuildData(version); return f.mappingMode || 'official'; }
+  if (loader === 'fabric') {
+    const f = getFabricBuildData(version);
+    if (f.mappingMode === 'yarn' && isValidYarnVersion(f.yarnVersion)) return 'yarn';
+    if (f.mappingMode === 'none') return 'none';
+    return 'official';
+  }
   if (loader === 'forge' || loader === 'neoforge') return 'official';
   return 'official';
 }
@@ -1817,8 +1825,8 @@ function buildGradle(loader, version, modName) {
 
   if (loader === 'fabric') {
     const fabric = getFabricBuildData(version);
-    const mappingMode = fabric.mappingMode || 'official';
-    const loomPluginId = mappingMode === 'none' ? 'net.fabricmc.fabric-loom' : 'net.fabricmc.fabric-loom-remap';
+    const mappingMode = getTargetMappingMode(loader, version);
+    const loomPluginId = 'net.fabricmc.fabric-loom';
     const dependencyConfig = mappingMode === 'none' ? 'implementation' : 'modImplementation';
     const mappingsLine = mappingMode === 'official'
       ? '    mappings loom.officialMojangMappings()'
@@ -2028,7 +2036,7 @@ org.gradle.parallel=true
 minecraft_version=${version}
 loader_version=${fabric.loaderVersion}
 loom_version=${fabric.loomVersion}
-yarn_mappings=${fabric.yarnVersion || ''}
+yarn_mappings=${isValidYarnVersion(fabric.yarnVersion) ? fabric.yarnVersion : ''}
 mod_version=1.0.0
 java_version=${javaVersion}
 maven_group=com.minecraftmod

@@ -348,7 +348,8 @@ function pickLatestYarnVersion(entries, minecraftVersion) {
       .filter(entry => entry && typeof entry.version === 'string')
       .filter(entry => entry.stable !== false)
       .map(entry => entry.version)
-      .filter(version => String(version).startsWith(`${minecraftVersion}+build.`)),
+      .filter(version => String(version).startsWith(`${minecraftVersion}+build.`))
+      .filter(version => /^\d+\.\d+(?:\.\d+)?\+build\.\d+$/.test(String(version))),
   );
   return versions[0] || null;
 }
