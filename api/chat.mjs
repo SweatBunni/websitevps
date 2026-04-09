@@ -1,6 +1,8 @@
 // Edge runtime — no Vercel function timeout, streams directly to client
 export const config = { runtime: 'edge' };
 
+import { getBuildResearch } from './_lib/research-metadata.mjs';
+
 function errJson(msg, status = 500) {
   return new Response(JSON.stringify({ message: msg }), {
     status,
@@ -21,15 +23,26 @@ function mappingMode(loader, version) {
   return 'official';
 }
 
-function researchMsg(loader, version) {
+async function researchMsg(loader, version) {
   const mode = mappingMode(loader, version);
   const lines = [];
+  let researchedBuild = null;
+  if (loader === 'fabric' || loader === 'forge') {
+    try {
+      researchedBuild = (await getBuildResearch(loader, version))?.build || null;
+    } catch {
+      researchedBuild = null;
+    }
+  }
   if (loader === 'fabric' && mode === 'yarn') {
     lines.push(`Fabric ${version} uses Yarn mappings. Use net.minecraft.block.*, net.minecraft.item.*, net.minecraft.registry.*, net.minecraft.util.Identifier.`);
     lines.push('For modern Fabric/Yarn targets, Identifier constructors are not public. Use Identifier.of(namespace, path) or Identifier.of(fullId).');
     lines.push('Prefer Item.Settings and AbstractBlock.Settings.copy(...) - avoid FabricItemSettings/FabricBlockSettings unless certain.');
     if (usesModernFabricRegistryKeys(version)) {
       lines.push('For modern Fabric blocks and block items, set registryKey(...) on AbstractBlock.Settings and Item.Settings before constructing the instances.');
+    }
+    if (researchedBuild) {
+      lines.push(`Use researched versions where relevant: loader ${researchedBuild.loaderVersion}, loom ${researchedBuild.loomVersion}, Gradle ${researchedBuild.gradleVersion}${researchedBuild.yarnVersion ? `, Yarn ${researchedBuild.yarnVersion}` : ''}${researchedBuild.fabricApiVersion ? `, Fabric API ${researchedBuild.fabricApiVersion}` : ''}.`);
     }
   }
   if (loader === 'fabric' && mode === 'none') {
@@ -38,6 +51,9 @@ function researchMsg(loader, version) {
   }
   if ((loader === 'forge' || loader === 'neoforge') && /^1\.21|^26\./.test(String(version||''))) {
     lines.push(`${loader} ${version}: use official Mojang mapping names only. Do not mix Fabric/Yarn imports.`);
+  }
+  if (loader === 'forge' && researchedBuild) {
+    lines.push(`Use researched versions where relevant: Forge ${researchedBuild.forgeVersion}, ForgeGradle ${researchedBuild.forgeGradleVersion}, Gradle ${researchedBuild.gradleVersion}, toolchain resolver ${researchedBuild.toolchainResolverVersion}.`);
   }
   if (loader === 'paper') {
     lines.push(`Paper ${version}: use the current Paper repository https://repo.papermc.io/repository/maven-public/ and avoid the old papermc.io repository URL.`);
@@ -61,7 +77,7 @@ export default async function handler(req) {
     return errJson('A non-empty messages array is required.', 400);
 
   const model = body.model || process.env.MISTRAL_MODEL || 'codestral-latest';
-  const extra = researchMsg(body.loader, body.version);
+  const extra = await researchMsg(body.loader, body.version);
   const messages = extra
     ? [body.messages[0], extra, ...body.messages.slice(1)]
     : body.messages;

@@ -1,10 +1,4 @@
 
-async function getGradleForMinecraft(mcVersion){
-  const res = await fetch("https://services.gradle.org/versions/current");
-  const data = await res.json();
-  return data.version;
-}
-
 import http from 'node:http';
 import fs from 'node:fs/promises';
 import syncFs from 'node:fs';
@@ -20,6 +14,7 @@ const { default: buildModHandler } = await import('./api/build-mod.mjs');
 const { default: buildWorkerHandler } = await import('./api/build-mod-worker.mjs');
 const { default: buildStatusHandler } = await import('./api/build-mod-status.mjs');
 const { default: buildResultHandler } = await import('./api/build-mod-result.mjs');
+const { default: researchHandler } = await import('./api/research.mjs');
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -33,6 +28,7 @@ const API_ROUTES = new Map([
   ['/api/build-mod-worker', buildWorkerHandler],
   ['/api/build-mod-status', buildStatusHandler],
   ['/api/build-mod-result', buildResultHandler],
+  ['/api/research', researchHandler],
 ]);
 
 const MIME_TYPES = new Map([

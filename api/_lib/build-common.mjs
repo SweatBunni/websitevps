@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { x as tarExtract } from 'tar';
+import { getBuildResearch } from './research-metadata.mjs';
 
 const MAX_BUILD_ATTEMPTS = 10;
 const MAX_REPAIR_ATTEMPTS_WITHOUT_PROGRESS = 3;
@@ -20,7 +21,8 @@ const javaRuntimeCache = new Map();
 
 export async function executeBuildJob({ apiKey, loader, version, modName, files, conversation, onAttempt, onBuildStart }) {
   const projectFiles = sanitizeFiles(files);
-  normalizeGeneratedFiles(projectFiles, loader, version);
+  const researchedBuild = await loadBuildResearch(loader, version);
+  await normalizeGeneratedFiles(projectFiles, loader, version, researchedBuild);
   const attempts = [];
 
   // Track consecutive repair rounds that produced no file changes, so we can
@@ -99,6 +101,7 @@ export async function executeBuildJob({ apiKey, loader, version, modName, files,
         requireConcreteChanges: stuckRepairRounds > 0,
         previousSummary: attempts.length > 1 ? (attempts[attempts.length - 2].fixSummary || '') : '',
         previousAttempts: attempts.slice(0, -1),
+        researchedBuild,
       });
     } catch (error) {
       // AI call failed (network, rate-limit after retries, etc.).  If it's a
@@ -130,7 +133,7 @@ export async function executeBuildJob({ apiKey, loader, version, modName, files,
 
     // Apply whatever files the AI returned (may be empty).
     const changedFiles = (repair && Array.isArray(repair.files) && repair.files.length > 0)
-      ? applyFileUpdates(projectFiles, repair.files, loader, version)
+      ? await applyFileUpdates(projectFiles, repair.files, loader, version, researchedBuild)
       : [];
 
     attempt.fixSummary = repair?.summary || 'Applied AI build fixes.';
@@ -389,7 +392,7 @@ function isRetryableAiStatus(status) {
   return status === 429 || status === 503 || status === 502 || status === 504;
 }
 
-async function requestBuildFix({ apiKey, loader, version, modName, conversation, files, buildLog, attemptNumber, requireConcreteChanges = false, previousSummary = '', previousAttempts = [] }) {
+async function requestBuildFix({ apiKey, loader, version, modName, conversation, files, buildLog, attemptNumber, requireConcreteChanges = false, previousSummary = '', previousAttempts = [], researchedBuild = null }) {
   const repairFiles = collectRepairFiles(files, buildLog).map(({ path: filePath, content }) => ({
     path: filePath,
     content: truncateRepairFileContent(content, filePath),
@@ -416,11 +419,12 @@ async function requestBuildFix({ apiKey, loader, version, modName, conversation,
           'Only include files that must be replaced.',
           'Use valid code for the exact loader and version.',
           'Do not invent libraries, mappings, classes, events, or plugin versions.',
+          'Research exact version numbers from official sources before changing wrappers, plugins, mappings, or dependencies. Never guess a Gradle distribution version.',
           'If a build script is wrong, fix the build script.',
           'If Java imports or APIs are wrong, fix those files.',
           'For Fabric Loom, do not add unsupported loom properties or blocks such as refreshVersions.',
-          'Fabric Loom must be version 1.7.x or newer (never use SNAPSHOT versions). Gradle must be 8.3–8.x (never Gradle 9.x — it broke the Loom Problems API). If the build.gradle has an old or SNAPSHOT loom version, replace it with 1.7.4. If the gradle-wrapper.properties points to Gradle 9.x, downgrade it to 8.8.1.',
           'Keep generated Gradle files close to the verified scaffold unless the build log clearly requires a script change.',
+          researchedBuild ? `Researched build metadata for this target: ${JSON.stringify(researchedBuild)}` : '',
           buildRepairGuidance(loader, version),
           requireConcreteChanges
             ? 'Your previous repair attempt did not change any project files. You must change at least one relevant file if the build log is fixable.'
@@ -587,7 +591,7 @@ function collectRepairFiles(files, buildLog) {
   return selected.slice(0, MAX_REPAIR_FILE_COUNT);
 }
 
-function applyFileUpdates(files, updates, loader, version) {
+async function applyFileUpdates(files, updates, loader, version, researchedBuild = null) {
   const changedFiles = [];
   for (const update of updates) {
     const relativePath = sanitizeRelativePath(update.path);
@@ -598,7 +602,7 @@ function applyFileUpdates(files, updates, loader, version) {
       changedFiles.push(relativePath);
     }
   }
-  const normalizedPaths = normalizeGeneratedFiles(files, loader, version);
+  const normalizedPaths = await normalizeGeneratedFiles(files, loader, version, researchedBuild);
   normalizedPaths.forEach(relativePath => {
     if (!changedFiles.includes(relativePath)) {
       changedFiles.push(relativePath);
@@ -614,18 +618,18 @@ function applyFileUpdates(files, updates, loader, version) {
 //
 // Safe pinned version for each loader:
 const GRADLE_SAFE_VERSION = {
-  fabric:   '8.8.1',  // Loom 1.7+ requires 8.8+; Loom 1.6-SNAPSHOT needs exactly 8.x; 9.x broke Problems API
-  forge:    '8.8.1',  // ForgeGradle 6.x is not Gradle 9 compatible
-  neoforge: '8.8.1',  // NeoGradle also not Gradle 9 compatible yet
-  paper:    '8.8.1',  // Safe default
-  spigot:   '8.8.1',
-  default:  '8.8.1',
+  fabric:   '9.3.0',
+  forge:    '8.12.1',
+  neoforge: '8.12.1',
+  paper:    '8.12.1',
+  spigot:   '8.12.1',
+  default:  '8.12.1',
 };
 const GRADLE_MIN_VERSION = [8, 3]; // Minimum for Java 21 support
 const GRADLE_MAX_VERSION = [8, 99]; // Never go to Gradle 9.x until plugins catch up
 
-function normalizeGradleWrapper(content, loader) {
-  const safeVersion = GRADLE_SAFE_VERSION[loader] || GRADLE_SAFE_VERSION.default;
+function normalizeGradleWrapper(content, loader, researchedBuild = null) {
+  const safeVersion = researchedBuild?.gradleVersion || GRADLE_SAFE_VERSION[loader] || GRADLE_SAFE_VERSION.default;
 
   return String(content || '').replace(
     /(distributionUrl\s*=\s*https\\:\/\/services\.gradle\.org\/distributions\/gradle-)(\d+\.\d+(?:\.\d+)?)(-.+)/,
@@ -639,10 +643,12 @@ function normalizeGradleWrapper(content, loader) {
         (major === GRADLE_MIN_VERSION[0] && minor < GRADLE_MIN_VERSION[1]);
 
       const tooNew =
-        major > GRADLE_MAX_VERSION[0] ||
-        (major === GRADLE_MAX_VERSION[0] && minor > GRADLE_MAX_VERSION[1]);
+        loader !== 'fabric' && (
+          major > GRADLE_MAX_VERSION[0] ||
+          (major === GRADLE_MAX_VERSION[0] && minor > GRADLE_MAX_VERSION[1])
+        );
 
-      if (tooOld || tooNew) {
+      if (tooOld || tooNew || ver !== safeVersion) {
         return `${prefix}${safeVersion}${suffix}`;
       }
       return match;
@@ -655,8 +661,9 @@ function upgradeGradleWrapperIfNeeded(content) {
   return normalizeGradleWrapper(content, 'default');
 }
 
-function normalizeGeneratedFiles(files, loader, version) {
+async function normalizeGeneratedFiles(files, loader, version, researchedBuild = null) {
   const changedFiles = [];
+  const resolvedBuild = researchedBuild || await loadBuildResearch(loader, version);
 
   // Upgrade Gradle wrapper if it's too old to support the host JVM.
   // Gradle < 8.3 cannot run on Java 21 (class file major version 65).
@@ -665,7 +672,7 @@ function normalizeGeneratedFiles(files, loader, version) {
   );
   if (wrapperPropsKey) {
     const normalized = normalizeFileData(files[wrapperPropsKey]);
-    const upgraded = normalizeGradleWrapper(normalized.content, loader);
+    const upgraded = normalizeGradleWrapper(normalized.content, loader, resolvedBuild);
     if (upgraded !== normalized.content) {
       files[wrapperPropsKey] = { encoding: 'utf8', content: upgraded };
       changedFiles.push(wrapperPropsKey);
@@ -724,6 +731,15 @@ function normalizeGeneratedFiles(files, loader, version) {
     }
   }
   return changedFiles;
+}
+
+async function loadBuildResearch(loader, version) {
+  try {
+    const result = await getBuildResearch(loader, version);
+    return result?.build || null;
+  } catch {
+    return null;
+  }
 }
 
 function buildRepairGuidance(loader, version) {
