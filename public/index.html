@@ -930,6 +930,7 @@ function getSelectedSetup() {
 }
 
 </script>
+<script src="/app-build.js"></script>
 <script>
 const DEFAULT_SYSTEM = `You are CodexMC, an expert Minecraft Java Edition coding assistant.
 You specialize in:
@@ -2757,67 +2758,6 @@ function appendBuildLog(progress, title, logText) {
   progress.appendChild(det);
 }
 
-function createGeneratedProject(loader, version, modName, fullText) {
-  const files = {};
-
-  // Parse code blocks from AI response — each block may start with // File: <path>
-  const re = /```(?:\w*)\n([\s\S]*?)```/g;
-  let m;
-  while ((m = re.exec(fullText)) !== null) {
-    const body = m[1];
-    const pathMatch = body.match(/^\/\/\s*File:\s*(.+?)\s*\n/i);
-    if (pathMatch) {
-      const filePath = pathMatch[1].trim();
-      const content = body.slice(pathMatch[0].length).trimEnd();
-      files[filePath] = content;
-    } else {
-      // No path comment — guess from content
-      const isGradle   = /^(plugins|dependencies|repositories)\s*\{/m.test(body);
-      const isProps    = /^minecraft_version\s*=/m.test(body);
-      const isJson     = body.trimStart().startsWith('{');
-      if      (isGradle && /settings/i.test(body)) files['settings.gradle']   = body.trimEnd();
-      else if (isGradle)                            files['build.gradle']      = body.trimEnd();
-      else if (isProps)                             files['gradle.properties'] = body.trimEnd();
-      else if (isJson && /modId|mod_id|fabric/i.test(body))
-        files['src/main/resources/fabric.mod.json'] = body.trimEnd();
-      else {
-        // Java file — try to extract package+class name
-        const pkgMatch   = body.match(/^package\s+([\w.]+)\s*;/m);
-        const classMatch = body.match(/(?:public\s+)?(?:class|interface|enum|record)\s+(\w+)/m);
-        if (pkgMatch && classMatch) {
-          const pkgPath = pkgMatch[1].replace(/\./g, '/');
-          files[`src/main/java/${pkgPath}/${classMatch[1]}.java`] = body.trimEnd();
-        }
-      }
-    }
-  }
-
-  // Keep Gradle wrapper infrastructure available even when the model now authors
-  // the project files itself.
-  if (!files['gradlew']) files['gradlew'] = gradlewScript();
-  if (!files['gradlew.bat']) files['gradlew.bat'] = gradlewBatScript();
-  if (!files['gradle/wrapper/gradle-wrapper.properties']) {
-    files['gradle/wrapper/gradle-wrapper.properties'] = gradleWrapperProperties(loader, version);
-  }
-  if (!files['gradle/wrapper/gradle-wrapper.jar']) {
-    files['gradle/wrapper/gradle-wrapper.jar'] = { encoding: 'base64', content: gradleWrapperJarBase64() };
-  }
-
-  return { files };
-}
-
-function getRequiredProjectFiles(loader) {
-  const required = ['build.gradle', 'settings.gradle', 'gradle.properties'];
-  if (loader === 'fabric') required.push('src/main/resources/fabric.mod.json');
-  if (loader === 'forge' || loader === 'neoforge') required.push('src/main/resources/META-INF/mods.toml');
-  return required;
-}
-
-function getMissingProjectFiles(loader, files) {
-  const normalized = new Set(Object.keys(files || {}).map(path => String(path || '').replace(/\\/g, '/')));
-  return getRequiredProjectFiles(loader).filter(path => !normalized.has(path));
-}
-
 async function startBuild(btn, fullText, customModName = '') {
   const prompt = btn.closest('.build-prompt');
   const loader = getSelectedLoader();
@@ -2825,8 +2765,16 @@ async function startBuild(btn, fullText, customModName = '') {
   await ensureBuildResearch(loader, version);
   const chat = getCurrentChat();
   const modName = resolveBuildModName(customModName, chat);
-  const project = createGeneratedProject(loader, version, modName, fullText);
-  const missingFiles = getMissingProjectFiles(loader, project.files);
+  const project = window.CodexBuildProject.createGeneratedProject({
+    fullText,
+    wrapperFiles: {
+      gradlew: gradlewScript(),
+      gradlewBat: gradlewBatScript(),
+      wrapperProperties: gradleWrapperProperties(loader, version),
+      wrapperJar: { encoding: 'base64', content: gradleWrapperJarBase64() },
+    },
+  });
+  const missingFiles = window.CodexBuildProject.getMissingProjectFiles(loader, project.files);
   const buildPayload = {
     loader,
     version,

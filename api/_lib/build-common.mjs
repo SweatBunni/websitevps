@@ -6,6 +6,14 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { x as tarExtract } from 'tar';
 import { getBuildResearch, getDeepBuildResearch, getAutonomousRepairResearch } from './research-metadata.mjs';
+import {
+  sanitizeFiles as sanitizeProjectFiles,
+  tail as tailText,
+  extractBuildFailureSignature as extractFailureSignature,
+  buildRepairFingerprint as createRepairFingerprint,
+  extractLatestPrompt as extractConversationPrompt,
+} from './build-file-utils.mjs';
+import { normalizeGeneratedFiles as normalizeProjectFiles } from './build-normalization.mjs';
 import { rememberBuildOutcome, rememberResearchBundle, retrieveRelevantMemories } from './site-memory.mjs';
 
 const MAX_BUILD_ATTEMPTS = 6;
@@ -21,7 +29,7 @@ const JAVA_EXTRACT_TIMEOUT_MS = 2 * 60 * 1000;
 const javaRuntimeCache = new Map();
 
 export async function executeBuildJob({ apiKey, loader, version, modName, files, conversation, onAttempt, onBuildStart, onActivity, researchBundle: preloadedResearch = null }) {
-  const projectFiles = sanitizeFiles(files);
+  const projectFiles = sanitizeProjectFiles(files);
   const researchBundle = await loadBuildResearchBundle(loader, version, preloadedResearch);
   const researchedBuild = researchBundle?.build || null;
   if (typeof onActivity === 'function') {
@@ -34,7 +42,7 @@ export async function executeBuildJob({ apiKey, loader, version, modName, files,
       buildResearch: researchBundle || researchedBuild,
     }).catch(() => {});
   }
-  await normalizeGeneratedFiles(projectFiles, loader, version, researchedBuild);
+  await normalizeProjectFiles(projectFiles, loader, version, researchedBuild);
   const attempts = [];
 
   // Track consecutive repair rounds that produced no file changes, so we can
@@ -56,9 +64,9 @@ export async function executeBuildJob({ apiKey, loader, version, modName, files,
       success: buildResult.success,
       exitCode: buildResult.exitCode,
       command: buildResult.command,
-      logTail: tail(buildResult.log, MAX_LOG_CHARS),
+      logTail: tailText(buildResult.log, MAX_LOG_CHARS),
     };
-    attempt.failureSignature = extractBuildFailureSignature(attempt.logTail);
+    attempt.failureSignature = extractFailureSignature(attempt.logTail);
 
     attempts.push(attempt);
     await notifyAttempt(onAttempt, attempts, projectFiles);
@@ -79,7 +87,7 @@ export async function executeBuildJob({ apiKey, loader, version, modName, files,
         loader,
         version,
         modName,
-        prompt: extractLatestPrompt(conversation),
+        prompt: extractConversationPrompt(conversation),
         success: true,
         failureSignature: attempts.slice(-1)[0]?.failureSignature || '',
         fixSummary: attempts.slice(-1)[0]?.fixSummary || '',
@@ -178,7 +186,7 @@ export async function executeBuildJob({ apiKey, loader, version, modName, files,
 
     attempt.fixSummary = repair?.summary || 'Applied AI build fixes.';
     attempt.changedFiles = changedFiles;
-    attempt.repairFingerprint = buildRepairFingerprint(projectFiles, attempt.fixSummary, changedFiles);
+    attempt.repairFingerprint = createRepairFingerprint(projectFiles, attempt.fixSummary, changedFiles);
     if (typeof onActivity === 'function') {
       await onActivity({
         message: changedFiles.length
@@ -200,7 +208,7 @@ export async function executeBuildJob({ apiKey, loader, version, modName, files,
         loader,
         version,
         modName,
-        prompt: extractLatestPrompt(conversation),
+        prompt: extractConversationPrompt(conversation),
         success: false,
         failureSignature: attempt.failureSignature,
         fixSummary: attempt.fixSummary,
@@ -482,18 +490,18 @@ async function requestBuildFix({ apiKey, loader, version, modName, conversation,
     path: filePath,
     content: truncateRepairFileContent(content, filePath),
   }));
-  const trimmedBuildLog = tail(buildLog, MAX_REPAIR_LOG_CHARS);
+  const trimmedBuildLog = tailText(buildLog, MAX_REPAIR_LOG_CHARS);
   const autonomousResearch = await loadAutonomousRepairResearch({
     loader,
     version,
     failureSignature,
     buildLog: trimmedBuildLog,
-    prompt: extractLatestPrompt(conversation),
+    prompt: extractConversationPrompt(conversation),
   });
   const relevantMemories = loader === 'fabric' && isFabricNonObfuscatedVersion(version)
     ? []
     : await retrieveRelevantMemories({
-        query: `${failureSignature}\n${trimmedBuildLog}\n${extractLatestPrompt(conversation)}`,
+        query: `${failureSignature}\n${trimmedBuildLog}\n${extractConversationPrompt(conversation)}`,
         loader,
         version,
         type: 'build',
@@ -706,7 +714,7 @@ async function applyFileUpdates(files, updates, loader, version, researchedBuild
       changedFiles.push(relativePath);
     }
   }
-  const normalizedPaths = await normalizeGeneratedFiles(files, loader, version, researchedBuild);
+  const normalizedPaths = await normalizeProjectFiles(files, loader, version, researchedBuild);
   normalizedPaths.forEach(relativePath => {
     if (!changedFiles.includes(relativePath)) {
       changedFiles.push(relativePath);
@@ -1672,7 +1680,7 @@ async function downloadAndExtractTarGz(url, extractRoot) {
       timeout,
     ]);
   } catch (error) {
-    throw new Error(`The downloaded JDK could not be extracted.\n${tail(error?.message || String(error), 1200)}`);
+    throw new Error(`The downloaded JDK could not be extracted.\n${tailText(error?.message || String(error), 1200)}`);
   }
 }
 
