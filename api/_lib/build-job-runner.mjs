@@ -66,7 +66,7 @@ export async function runBuildJobInput(jobId, input) {
           latest?.activityLog,
           textureResult.generatedTextures.length
             ? `Generated ${textureResult.generatedTextures.length} texture asset(s).`
-            : `Texture generation finished with ${textureResult.textureWarnings.length} warning(s) and no new textures.`,
+            : `Texture generation finished with ${textureResult.textureWarnings.length} warning(s) and no new textures.${textureResult.textureWarnings[0] ? ` First warning: ${textureResult.textureWarnings[0]}` : ''}`,
         ),
         provider: 'vercel',
       });

@@ -2,7 +2,7 @@ import path from 'node:path';
 
 const MAX_TEXTURE_TARGETS = 3;
 
-// Cache the image-generation agent ID per API key within a function instance.
+// Cache the image-generation agent ID per API key/model within a function instance.
 // This avoids creating a new agent on every texture generation call.
 const agentIdCache = new Map();
 
@@ -215,61 +215,68 @@ async function createImageAgent(apiKey, model) {
 }
 
 async function generateTextureImage({ apiKey, prompt }) {
-  const model = process.env.MISTRAL_TEXTURE_MODEL || 'mistral-medium-latest';
+  const model = process.env.MISTRAL_TEXTURE_MODEL || 'mistral-medium-2505';
+  const cacheKey = `${apiKey}:${model}`;
   const baseHeaders = {
     'Content-Type': 'application/json',
     Authorization: `Bearer ${apiKey}`,
     Accept: 'application/json',
   };
 
-  // Step 1: Reuse or create an image-generation agent (cached per API key)
-  let agentId = agentIdCache.get(apiKey);
-  if (!agentId) {
-    agentId = await createImageAgent(apiKey, model);
-    agentIdCache.set(apiKey, agentId);
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    let agentId = agentIdCache.get(cacheKey);
+    if (!agentId) {
+      agentId = await createImageAgent(apiKey, model);
+      agentIdCache.set(cacheKey, agentId);
+    }
+
+    const convResponse = await fetch('https://api.mistral.ai/v1/conversations', {
+      method: 'POST',
+      headers: baseHeaders,
+      body: JSON.stringify({
+        agent_id: agentId,
+        inputs: prompt,
+        stream: false,
+        store: false,
+      }),
+    });
+
+    const convText = await convResponse.text();
+    let convJson = {};
+    try { convJson = JSON.parse(convText); } catch { convJson = {}; }
+
+    if (!convResponse.ok) {
+      agentIdCache.delete(cacheKey);
+      const message = convJson?.message || convJson?.error?.message || convJson?.error || convText || `Texture generation failed with HTTP ${convResponse.status}.`;
+      if (attempt < 2) continue;
+      throw new Error(message);
+    }
+
+    const fileId = findFirstFileId(convJson);
+    if (!fileId) {
+      agentIdCache.delete(cacheKey);
+      if (attempt < 2) continue;
+      throw new Error('Texture generation did not return an image file id.');
+    }
+
+    const fileResponse = await fetch(`https://api.mistral.ai/v1/files/${encodeURIComponent(fileId)}/content`, {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        Accept: 'image/png,application/octet-stream',
+      },
+    });
+
+    if (!fileResponse.ok) {
+      const message = await fileResponse.text().catch(() => '');
+      agentIdCache.delete(cacheKey);
+      if (attempt < 2) continue;
+      throw new Error(message || `Could not download generated texture (HTTP ${fileResponse.status}).`);
+    }
+
+    return Buffer.from(await fileResponse.arrayBuffer());
   }
 
-  // Step 2: Start a conversation with that agent
-  const convResponse = await fetch('https://api.mistral.ai/v1/conversations', {
-    method: 'POST',
-    headers: baseHeaders,
-    body: JSON.stringify({
-      agent_id: agentId,
-      inputs: prompt,
-      stream: false,
-    }),
-  });
-
-  const convText = await convResponse.text();
-  let convJson = {};
-  try { convJson = JSON.parse(convText); } catch { convJson = {}; }
-
-  if (!convResponse.ok) {
-    // If agent was deleted/expired, clear cache and let next call recreate it
-    if (convResponse.status === 404) agentIdCache.delete(apiKey);
-    const message = convJson?.message || convJson?.error?.message || convJson?.error || convText || `Texture generation failed with HTTP ${convResponse.status}.`;
-    throw new Error(message);
-  }
-
-  const fileId = findFirstFileId(convJson);
-  if (!fileId) {
-    throw new Error('Texture generation did not return an image file id.');
-  }
-
-  // Step 3: Download the generated image
-  const fileResponse = await fetch(`https://api.mistral.ai/v1/files/${encodeURIComponent(fileId)}/content`, {
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      Accept: 'image/png,application/octet-stream',
-    },
-  });
-
-  if (!fileResponse.ok) {
-    const message = await fileResponse.text().catch(() => '');
-    throw new Error(message || `Could not download generated texture (HTTP ${fileResponse.status}).`);
-  }
-
-  return Buffer.from(await fileResponse.arrayBuffer());
+  throw new Error('Texture generation failed unexpectedly.');
 }
 
 function findFirstFileId(value) {
