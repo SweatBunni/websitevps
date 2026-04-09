@@ -1,0 +1,24 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "fluid": true,
+  "rewrites": [
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
+  ],
+  "headers": [
+    {
+      "source": "/index.html",
+      "headers": [{ "key": "Cache-Control", "value": "no-store, no-cache, must-revalidate" }]
+    },
+    {
+      "source": "/(.*)",
+      "headers": [{ "key": "Cache-Control", "value": "no-store" }]
+    }
+  ],
+  "functions": {
+    "api/chat.mjs": { "maxDuration": 60 },
+    "api/build-mod.mjs": { "maxDuration": 60 },
+    "api/build-mod-worker.mjs": { "maxDuration": 300 },
+    "api/build-mod-status.mjs": { "maxDuration": 60 },
+    "api/build-mod-result.mjs": { "maxDuration": 60 }
+  }
+}
