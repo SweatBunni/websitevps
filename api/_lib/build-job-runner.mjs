@@ -1,6 +1,5 @@
 import { executeBuildJob } from './build-common.mjs';
 import { getJson, getLatestStatus, putBytes, putJson, putStatus, putText } from './build-store.mjs';
-import { enrichProjectWithGeneratedTextures } from './texture-generation.mjs';
 import { getDeepBuildResearch } from './research-metadata.mjs';
 
 const STATUS_RETRY_ATTEMPTS = 10;
@@ -42,7 +41,6 @@ export async function runBuildJobInput(jobId, input) {
 
   try {
     const researchBundle = await runResearchPhase(jobId, input, startedAt, existing);
-    const textureResult = await runTexturePhase(jobId, input, startedAt, existing);
     const result = await runBuildPhase(jobId, input, startedAt, researchBundle);
 
     await putJson(jobId, 'files.json', result.files);
@@ -52,10 +50,10 @@ export async function runBuildJobInput(jobId, input) {
 
     if (result.success) {
       await putBytes(jobId, 'artifact.jar', result.jarBuffer, 'application/java-archive');
-      return finalizeSuccess(jobId, input, startedAt, result, textureResult);
+      return finalizeSuccess(jobId, input, startedAt, result);
     }
 
-    return finalizeFailure(jobId, input, startedAt, result, textureResult);
+    return finalizeFailure(jobId, input, startedAt, result);
   } catch (error) {
     return finalizeWorkerFailure(jobId, input, startedAt, error);
   }
@@ -68,44 +66,6 @@ async function runResearchPhase(jobId, input, startedAt, existing) {
     buildResearch: researchBundle,
   });
   return researchBundle;
-}
-
-async function runTexturePhase(jobId, input, startedAt, existing) {
-  const textureResult = await enrichProjectWithGeneratedTextures({
-    apiKey: process.env.MISTRAL_API_KEY,
-    loader: input.loader,
-    version: input.version,
-    modName: input.modName,
-    files: input.files,
-    conversation: input.conversation || [],
-  });
-
-  if (textureResult.generatedTextures.length || textureResult.textureWarnings.length) {
-    const latest = await getLatestStatus(jobId);
-    await writeStatus(jobId, latest, {
-      ...(latest || {}),
-      jobId,
-      status: 'running',
-      loader: input.loader,
-      version: input.version,
-      modName: input.modName,
-      attempts: existing?.attempts || [],
-      generatedTextures: textureResult.generatedTextures,
-      textureWarnings: textureResult.textureWarnings,
-      createdAt: input.createdAt,
-      startedAt,
-      updatedAt: new Date().toISOString(),
-      activityLog: appendActivity(
-        latest?.activityLog,
-        textureResult.generatedTextures.length
-          ? `Generated ${textureResult.generatedTextures.length} texture asset(s).`
-          : `Texture generation finished with ${textureResult.textureWarnings.length} warning(s) and no new textures.${textureResult.textureWarnings[0] ? ` First warning: ${textureResult.textureWarnings[0]}` : ''}`,
-      ),
-      provider: 'vercel',
-    });
-  }
-
-  return textureResult;
 }
 
 async function runBuildPhase(jobId, input, startedAt, researchBundle) {
@@ -176,7 +136,7 @@ async function runBuildPhase(jobId, input, startedAt, researchBundle) {
   });
 }
 
-async function finalizeSuccess(jobId, input, startedAt, result, textureResult) {
+async function finalizeSuccess(jobId, input, startedAt, result) {
   const completedAt = new Date().toISOString();
   await putStatus(jobId, {
     jobId,
@@ -185,8 +145,6 @@ async function finalizeSuccess(jobId, input, startedAt, result, textureResult) {
     version: input.version,
     modName: input.modName,
     attempts: result.attempts,
-    generatedTextures: textureResult.generatedTextures,
-    textureWarnings: textureResult.textureWarnings,
     jarFileName: result.jarFileName,
     buildLogTail: result.buildLogTail || '',
     activityLog: appendActivity((await getLatestStatus(jobId))?.activityLog, 'Build completed successfully and the JAR is ready.'),
@@ -199,7 +157,7 @@ async function finalizeSuccess(jobId, input, startedAt, result, textureResult) {
   return { status: 'completed' };
 }
 
-async function finalizeFailure(jobId, input, startedAt, result, textureResult) {
+async function finalizeFailure(jobId, input, startedAt, result) {
   const failedAt = new Date().toISOString();
   await putStatus(jobId, {
     jobId,
@@ -208,8 +166,6 @@ async function finalizeFailure(jobId, input, startedAt, result, textureResult) {
     version: input.version,
     modName: input.modName,
     attempts: result.attempts,
-    generatedTextures: textureResult.generatedTextures,
-    textureWarnings: textureResult.textureWarnings,
     message: result.message || 'Build failed.',
     buildLogTail: result.buildLogTail || '',
     activityLog: appendActivity((await getLatestStatus(jobId))?.activityLog, `Build failed: ${result.message || 'unknown error'}`),

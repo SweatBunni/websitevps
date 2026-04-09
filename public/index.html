@@ -729,27 +729,6 @@ html, body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--bg4); border-radius: 2px; }
 
-/* ── TEXTURE PREVIEWS ── */
-.texture-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-.texture-card {
-  width: 80px;
-  background: var(--bg3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 8px;
-  text-align: center;
-}
-.texture-card img {
-  width: 48px; height: 48px;
-  image-rendering: pixelated;
-  display: block;
-  margin: 0 auto 5px;
-  background: rgba(255,255,255,0.04);
-  border-radius: 3px;
-}
-.texture-kind { font-size: 9px; color: var(--amber); letter-spacing: 1px; text-transform: uppercase; margin-bottom: 2px; }
-.texture-name { font-size: 10px; color: var(--text2); word-break: break-all; }
-
 /* misc */
 .hidden { display: none !important; }
 details summary { cursor: pointer; font-size: 11px; color: var(--text2); }
@@ -963,7 +942,7 @@ For full buildable project generation, do NOT rely on hidden templates. You must
 When generating a full mod or plugin, include complete file blocks for build.gradle, settings.gradle, gradle.properties, loader metadata files, and all required Java/resource files.
 Start every generated file block with a first line comment like // File: relative/path.ext, even for Gradle, JSON, TOML, and other non-Java files.
 
-IMPORTANT - TEXTURES: You ALWAYS include complete model JSON files for any item or block you create. Never say you cannot create textures. The build system auto-generates PNG textures using AI image generation. Your job is to output the correct model JSON and reference texture paths properly in code. Always register items and blocks with their full resource location so textures are detected and generated automatically.`
+You ALWAYS include complete model JSON files for any item or block you create, and reference texture paths properly in code.`
 
 function readStoredJson(key, fallback) {
   try {
@@ -2654,50 +2633,6 @@ function normalizeBuildFile(p, d) {
 function shouldIncludeInSourceArchive() { return true; }
 function makeDownloadLink(blob, fileName) { return { url: URL.createObjectURL(blob), fileName }; }
 
-function getTexturePreviewEntries(files, generatedTextures) {
-  const ordered = [], byPath = new Map();
-  Object.entries(files||{}).forEach(([p,d]) => {
-    const n = normalizeBuildFile(p,d);
-    if (n.encoding === 'base64' && /\/textures\/(?:block|item)\/.+\.png$/i.test(p)) {
-      byPath.set(p, { path: p, label: p.split('/').pop().replace(/\.png$/i,''), src: `data:image/png;base64,${n.content}` });
-    }
-  });
-  (generatedTextures||[]).forEach(tx => {
-    if (tx?.texturePath && byPath.has(tx.texturePath)) {
-      ordered.push({ ...byPath.get(tx.texturePath), kind: tx.kind });
-      byPath.delete(tx.texturePath);
-    }
-  });
-  return ordered.concat(Array.from(byPath.values())).slice(0,6);
-}
-
-function renderTextureSection(progress, files, generatedTextures, warnings) {
-  const previews = getTexturePreviewEntries(files, generatedTextures);
-  if (!previews.length && !warnings?.length) return;
-  const sec = document.createElement('div');
-  sec.style.marginTop = '12px';
-  if (previews.length) {
-    const title = document.createElement('div');
-    title.style.cssText = 'font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--amber);margin-bottom:8px;font-weight:700;';
-    title.textContent = 'Generated Textures';
-    sec.appendChild(title);
-    const grid = document.createElement('div');
-    grid.className = 'texture-grid';
-    previews.forEach(p => {
-      const card = document.createElement('div');
-      card.className = 'texture-card';
-      card.innerHTML = `<img src="${p.src}" alt="${escapeHtml(p.label)}"><div class="texture-kind">${escapeHtml(p.kind||'texture')}</div><div class="texture-name">${escapeHtml(p.label)}</div>`;
-      grid.appendChild(card);
-    });
-    sec.appendChild(grid);
-  }
-  if (warnings?.length) {
-    const det = document.createElement('details');
-    det.style.marginTop = '8px';
-    det.innerHTML = `<summary>Texture notes</summary><pre>${warnings.map(t=>escapeHtml(t)).join('\n')}</pre>`;
-    sec.appendChild(det);
-  }
-  progress.appendChild(sec);
 }
 
 function renderBuildAttemptLines(logEl, attempts) {
@@ -2925,8 +2860,6 @@ async function startBuild(btn, fullText, customModName = '') {
         files: filesJson.files || project.files,
         buildLogTail: logText,
         message: jarResponse?.ok ? '' : 'Build finished, but live status updates were unavailable.',
-        generatedTextures: [],
-        textureWarnings: [],
       };
     }
 
@@ -2996,7 +2929,6 @@ async function startBuild(btn, fullText, customModName = '') {
       btns.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;';
       btns.innerHTML = `<a class="build-download-btn secondary" href="${srcZip.url}" download="${srcZip.fileName}">Download Sources</a>`;
       progress.appendChild(btns);
-      renderTextureSection(progress, finalFiles, status.generatedTextures, status.textureWarnings);
       appendBuildLog(progress, 'Build log', status.buildLogTail || status.message || '');
       scrollToBottom();
       return;
@@ -3012,7 +2944,6 @@ async function startBuild(btn, fullText, customModName = '') {
       <a class="build-download-btn secondary" href="${srcZip.url}" download="${srcZip.fileName}">⬇ Download Sources</a>
     `;
     progress.appendChild(btns);
-    renderTextureSection(progress, finalFiles, status.generatedTextures, status.textureWarnings);
     appendBuildLog(progress, 'Build log', status.buildLogTail || '');
 
   } catch(e) {
