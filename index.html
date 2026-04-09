@@ -1008,6 +1008,16 @@ function normalizeStoredChats(value) {
       messages: messages.length ? messages : [{ role: 'system', content: DEFAULT_SYSTEM }],
       loader: typeof chat.loader === 'string' && chat.loader ? chat.loader : null,
       version: typeof chat.version === 'string' && chat.version ? chat.version : null,
+      activityLog: Array.isArray(chat.activityLog)
+        ? chat.activityLog
+            .filter(entry => entry && typeof entry === 'object')
+            .map(entry => ({
+              time: typeof entry.time === 'string' && entry.time ? entry.time : new Date().toISOString(),
+              message: typeof entry.message === 'string' ? entry.message : '',
+            }))
+            .filter(entry => entry.message)
+            .slice(-12)
+        : [],
     };
   }).filter(Boolean);
 }
@@ -1017,7 +1027,6 @@ let state = {
   chats: storedChats,
   currentId: storedChats.length ? storedChats[storedChats.length - 1].id : null,
   isStreaming: false,
-  chatActivityLog: [],
   sidebarOpen: true,
   desktopSidebarOpen: true,
   isMobileLayout: false,
@@ -1305,7 +1314,15 @@ function renderChatList() {
 
 function createDraftChat() {
   const id = 'chat_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);
-  const chat = { id, title: 'New Chat', created: Date.now(), messages: [{ role: 'system', content: state.systemPrompt || DEFAULT_SYSTEM }], loader: null, version: null };
+  const chat = {
+    id,
+    title: 'New Chat',
+    created: Date.now(),
+    messages: [{ role: 'system', content: state.systemPrompt || DEFAULT_SYSTEM }],
+    loader: null,
+    version: null,
+    activityLog: [],
+  };
   state.chats.push(chat);
   state.currentId = id;
   return chat;
@@ -1314,6 +1331,7 @@ function createDraftChat() {
 function newChat() {
   resetMessages();
   createDraftChat();
+  renderChatActivity([]);
   showWelcome(true);
   document.getElementById('topbar-title').textContent = 'New Chat';
   updateUrlHash(null);
@@ -1329,6 +1347,7 @@ function loadChat(id) {
   showWelcome(false);
   resetMessages();
   chat.messages.filter(m => m.role !== 'system').forEach(m => appendMessage(m.role, m.content, false));
+  renderChatActivity(chat.activityLog || []);
   document.getElementById('topbar-title').textContent = chat.title;
 
   // Restore loader/version selectors to what this chat used
@@ -1397,7 +1416,7 @@ function resetMessages() {
   const m = document.getElementById('messages');
   m.querySelectorAll('.msg').forEach(el => el.remove());
   setTypingVisible(false);
-  clearChatActivity();
+  renderChatActivity([]);
 }
 function scrollToBottom() {
   const w = document.getElementById('messages-wrap');
@@ -1439,19 +1458,32 @@ function renderChatActivity(entries = []) {
   logEl.scrollTop = logEl.scrollHeight;
 }
 
+function getCurrentChatActivity() {
+  const chat = getCurrentChat();
+  return Array.isArray(chat?.activityLog) ? chat.activityLog : [];
+}
+
 function clearChatActivity() {
-  state.chatActivityLog = [];
+  const chat = getCurrentChat();
+  if (chat) {
+    chat.activityLog = [];
+    saveChats();
+  }
   renderChatActivity([]);
 }
 
 function addChatActivity(message) {
   if (!message) return;
-  const next = Array.isArray(state.chatActivityLog) ? state.chatActivityLog.slice(-11) : [];
+  const chat = getCurrentChat();
+  const next = getCurrentChatActivity().slice(-11);
   next.push({
     time: new Date().toISOString(),
     message: String(message),
   });
-  state.chatActivityLog = next;
+  if (chat) {
+    chat.activityLog = next;
+    saveChats();
+  }
   renderChatActivity(next);
   scrollToBottom();
 }
