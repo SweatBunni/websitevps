@@ -76,6 +76,11 @@ export async function completeChat({
   const payload = await response.json().catch(() => ({}));
   const usedModel = payload?.model || model;
   const text = extractCompletionText(payload);
+  if (!text) {
+    const error = new Error(`Provider returned no text for model ${usedModel}. Raw payload: ${compactPayload(payload)}`);
+    error.status = 502;
+    throw error;
+  }
   return { model: usedModel, text, payload };
 }
 
@@ -146,6 +151,15 @@ function splitIntoChunks(text, maxLength) {
     chunks.push(value.slice(index, index + maxLength));
   }
   return chunks;
+}
+
+function compactPayload(payload) {
+  try {
+    const text = JSON.stringify(payload);
+    return text.length > 800 ? `${text.slice(0, 800)}...` : text;
+  } catch {
+    return '[unserializable payload]';
+  }
 }
 
 function extractCompletionText(payload) {
