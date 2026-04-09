@@ -1041,7 +1041,7 @@ function normalizeFabricBuildGradle(content, version, researchedBuild = null, ne
 
   next = next.replace(/^\s*mappings\s+"net\.fabricmc:yarn:[^"\r\n]*"\s*(?:\r?\n|$)/gm, '');
   next = next.replace(/^\s*mappings\s+loom\.officialMojangMappings\(\)\s*(?:\r?\n|$)/gm, '');
-  next = next.replace(/^\s*(?:implementation|modImplementation|compileOnly|modCompileOnly|runtimeOnly|modRuntimeOnly)\s+"net\.fabricmc\.fabric-api:fabric-api:[^"\r\n]+"\s*(?:\r?\n|$)/gm, '');
+  next = next.replace(/^\s*(?:implementation|modImplementation|compileOnly|modCompileOnly|runtimeOnly|modRuntimeOnly)\s+["']net\.fabricmc(?:\.fabric-api)?:[^"'\r\n]+["']\s*(?:\r?\n|$)/gm, '');
 
   if (mappingMode === 'yarn') {
     if (!/^\s*mappings\s+"net\.fabricmc:yarn:\$\{project\.yarn_mappings\}:v2"\s*$/m.test(next)) {
@@ -1062,7 +1062,8 @@ function normalizeFabricBuildGradle(content, version, researchedBuild = null, ne
   next = next.replace(/\bmodImplementation\b/g, 'implementation');
   next = next.replace(/\bmodCompileOnly\b/g, 'compileOnly');
   next = next.replace(/\bmodRuntimeOnly\b/g, 'runtimeOnly');
-  if (needsFabricApi && researchedBuild?.fabricApiVersion && !/net\.fabricmc\.fabric-api:fabric-api:\$\{project\.fabric_version\}/.test(next)) {
+  const validFabricApiVersion = getResolvedFabricApiVersion(version, researchedBuild);
+  if (needsFabricApi && validFabricApiVersion && !/net\.fabricmc\.fabric-api:fabric-api:\$\{project\.fabric_version\}/.test(next)) {
     next = next.replace(
       /(implementation\s+"net\.fabricmc:fabric-loader:\\\$\{project\.loader_version\}"\s*\r?\n)/,
       `$1    implementation "net.fabricmc.fabric-api:fabric-api:\${project.fabric_version}"\n`,
@@ -1106,11 +1107,25 @@ function normalizeFabricGradleProperties(content, version, researchedBuild = nul
     }
   }
   next = next.replace(/^\s*fabric_version=.*(?:\r?\n|$)/gm, '');
-  if (needsFabricApi && researchedBuild?.fabricApiVersion) {
+  const validFabricApiVersion = getResolvedFabricApiVersion(version, researchedBuild);
+  if (needsFabricApi && validFabricApiVersion) {
     const suffix = next.endsWith('\n') ? '' : '\n';
-    next = `${next}${suffix}fabric_version=${researchedBuild.fabricApiVersion}\n`;
+    next = `${next}${suffix}fabric_version=${validFabricApiVersion}\n`;
   }
   return next.trimEnd();
+}
+
+function getResolvedFabricApiVersion(version, researchedBuild = null) {
+  const candidate = String(researchedBuild?.fabricApiVersion || '').trim();
+  if (!candidate) return null;
+  return isFabricApiVersionForMinecraft(candidate, version) ? candidate : null;
+}
+
+function isFabricApiVersionForMinecraft(candidate, minecraftVersion) {
+  const version = String(candidate || '').trim();
+  const game = String(minecraftVersion || '').trim();
+  if (!version || !game) return false;
+  return version.endsWith(`+${game}`);
 }
 
 function normalizeFabricModJson(content, needsFabricApi = false) {

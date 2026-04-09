@@ -679,9 +679,16 @@ function pickLatestMatchingMajor(versions, major) {
 function pickLatestFabricApiVersion(versions, minecraftVersion) {
   const exactSuffix = `+${minecraftVersion}`;
   const matching = uniqueSortedVersions(
-    (versions || []).filter(version => String(version).includes(exactSuffix)),
+    (versions || []).filter(version => isFabricApiVersionForMinecraft(version, minecraftVersion) && String(version).includes(exactSuffix)),
   );
   return matching[0] || null;
+}
+
+function isFabricApiVersionForMinecraft(version, minecraftVersion) {
+  const normalizedVersion = String(version || '').trim();
+  const normalizedMinecraft = String(minecraftVersion || '').trim();
+  if (!normalizedVersion || !normalizedMinecraft) return false;
+  return normalizedVersion.endsWith(`+${normalizedMinecraft}`);
 }
 
 function pickLatestYarnVersion(entries, minecraftVersion, metadataVersions = []) {
