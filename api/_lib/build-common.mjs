@@ -173,8 +173,8 @@ async function runGradleBuild(files, loader, version) {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'minecraft-mod-build-'));
   const gradleUserHome = path.join(tempRoot, '.gradle-user-home');
   const isWindows = process.platform === 'win32';
-  const command = isWindows ? 'cmd.exe' : './gradlew';
-  const args = isWindows
+  let command = isWindows ? 'cmd.exe' : './gradlew';
+  let args = isWindows
     ? ['/c', 'gradlew.bat', 'build', '--stacktrace', '--console=plain', '--no-daemon']
     : ['build', '--stacktrace', '--console=plain', '--no-daemon'];
 
@@ -193,11 +193,15 @@ async function runGradleBuild(files, loader, version) {
     }
 
     await writeProjectFiles(tempRoot, files);
-    if (javaRuntime.javaHome) {
-      await pinGradleJavaHome(tempRoot, javaRuntime.javaHome);
-    }
     if (!isWindows) {
       await fs.chmod(path.join(tempRoot, 'gradlew'), 0o755);
+    }
+
+    if (javaRuntime.javaHome) {
+      const gradleJavaArg = `-Dorg.gradle.java.home=${javaRuntime.javaHome}`;
+      args = isWindows
+        ? ['/c', 'gradlew.bat', gradleJavaArg, 'build', '--stacktrace', '--console=plain', '--no-daemon']
+        : [gradleJavaArg, 'build', '--stacktrace', '--console=plain', '--no-daemon'];
     }
 
     const execResult = await spawnWithOutput(command, args, {
@@ -206,6 +210,7 @@ async function runGradleBuild(files, loader, version) {
         ...process.env,
         GRADLE_USER_HOME: gradleUserHome,
         ...(javaRuntime.javaHome ? { JAVA_HOME: javaRuntime.javaHome } : {}),
+        ...(javaRuntime.javaHome ? { GRADLE_OPTS: joinGradleOpts(process.env.GRADLE_OPTS, `-Dorg.gradle.java.home=${javaRuntime.javaHome}`) } : {}),
         PATH: javaRuntime.binDir
           ? `${javaRuntime.binDir}${path.delimiter}${process.env.PATH || ''}`
           : (process.env.PATH || ''),
@@ -271,27 +276,9 @@ async function writeProjectFiles(rootDir, files) {
   }
 }
 
-async function pinGradleJavaHome(rootDir, javaHome) {
-  const gradlePropertiesPath = path.join(rootDir, 'gradle.properties');
-  const normalizedJavaHome = String(javaHome || '').replace(/\\/g, '/');
-  const propertyLine = `org.gradle.java.home=${normalizedJavaHome}`;
-
-  let content = '';
-  try {
-    content = await fs.readFile(gradlePropertiesPath, 'utf8');
-  } catch {
-    content = '';
-  }
-
-  const withoutExisting = content
-    .replace(/^\s*org\.gradle\.java\.home\s*=.*(?:\r?\n|$)/gm, '')
-    .trimEnd();
-
-  const nextContent = withoutExisting
-    ? `${withoutExisting}\n${propertyLine}\n`
-    : `${propertyLine}\n`;
-
-  await fs.writeFile(gradlePropertiesPath, nextContent, 'utf8');
+function joinGradleOpts(existingValue, nextValue) {
+  const existing = String(existingValue || '').trim();
+  return existing ? `${existing} ${nextValue}` : nextValue;
 }
 
 async function findBuiltJar(rootDir) {
