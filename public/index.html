@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CodexMC — AI Minecraft Mod Generator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Syne:wght@400;600;700;800&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════════ LANDING PAGE -->
+<div id="landing-page">
+
+  <!-- Animated background canvas -->
+  <canvas id="bg-canvas"></canvas>
+
+  <!-- Nav -->
+  <nav class="landing-nav">
+    <div class="nav-logo">
+      <span class="logo-bracket">[</span>
+      <span class="logo-text">CodexMC</span>
+      <span class="logo-bracket">]</span>
+    </div>
+    <div class="nav-links">
+      <a href="#features">Features</a>
+      <a href="#loaders">Loaders</a>
+      <button class="nav-cta" onclick="showApp()">Launch App</button>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <section class="hero">
+    <div class="hero-badge">
+      <span class="badge-dot"></span>
+      Powered by Claude claude-sonnet-4-20250514
+    </div>
+    <h1 class="hero-title">
+      <span class="title-line">Forge Your</span>
+      <span class="title-line title-accent">Minecraft Mods</span>
+      <span class="title-line">With AI</span>
+    </h1>
+    <p class="hero-sub">
+      Describe your mod idea. CodexMC writes the code, sets up the build system,
+      and compiles the JAR — ready to drop into your mods folder.
+    </p>
+    <div class="hero-actions">
+      <button class="btn-primary" onclick="showApp()">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5,3 19,12 5,21"/></svg>
+        Start Generating
+      </button>
+      <a href="#features" class="btn-ghost">See Features</a>
+    </div>
+
+    <div class="hero-stats">
+      <div class="stat"><span class="stat-num">3</span><span class="stat-label">Mod Loaders</span></div>
+      <div class="stat-div"></div>
+      <div class="stat"><span class="stat-num">50+</span><span class="stat-label">MC Versions</span></div>
+      <div class="stat-div"></div>
+      <div class="stat"><span class="stat-num">Live</span><span class="stat-label">Console Output</span></div>
+    </div>
+  </section>
+
+  <!-- Terminal preview -->
+  <div class="terminal-preview">
+    <div class="terminal-bar">
+      <span class="t-dot t-red"></span>
+      <span class="t-dot t-yellow"></span>
+      <span class="t-dot t-green"></span>
+      <span class="t-title">codexmc — mod generator</span>
+    </div>
+    <div class="terminal-body" id="terminal-preview-body">
+      <div class="t-line"><span class="t-prompt">$</span> <span class="t-cmd">codexmc generate "a sword that shoots lightning bolts" --loader forge --mc 1.20.1</span></div>
+      <div class="t-line t-info">🚀 Starting mod generation for Forge 1.20.1</div>
+      <div class="t-line t-ai">🤖 Connecting to Claude claude-sonnet-4-20250514...</div>
+      <div class="t-line t-ai">✨ Generating LightningBlade mod...</div>
+      <div class="t-line t-file">  📄 Created: src/main/java/com/codex/lightningblade/LightningBladeMod.java</div>
+      <div class="t-line t-file">  📄 Created: src/main/java/com/codex/lightningblade/item/LightningBlade.java</div>
+      <div class="t-line t-file">  📄 Created: build.gradle</div>
+      <div class="t-line t-file">  📄 Created: src/main/resources/META-INF/mods.toml</div>
+      <div class="t-line t-build">🏗️  Running: ./gradlew build --no-daemon</div>
+      <div class="t-line t-build">> Task :compileJava UP-TO-DATE</div>
+      <div class="t-line t-build">> Task :processResources</div>
+      <div class="t-line t-build">> Task :jar</div>
+      <div class="t-line t-build">> Task :build</div>
+      <div class="t-line t-success">✅ BUILD SUCCESSFUL in 47s</div>
+      <div class="t-line t-success">🎉 lightningblade-1.0.0-forge-1.20.1.jar ready!</div>
+      <div class="t-cursor">▋</div>
+    </div>
+  </div>
+
+  <!-- Features -->
+  <section id="features" class="features-section">
+    <div class="section-label">What you get</div>
+    <h2 class="section-title">Everything to ship your mod</h2>
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+        </div>
+        <h3>AI-Powered Code</h3>
+        <p>Claude generates complete, compilable Java source code tailored to your exact mod description and Minecraft version.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+        </div>
+        <h3>Live Console</h3>
+        <p>Watch the AI write your mod in real time. Every file, every Gradle task, streamed directly to your browser.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 7H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z"/><path d="M12 12h.01M8 12h.01M16 12h.01"/></svg>
+        </div>
+        <h3>Compiled JAR</h3>
+        <p>We build the project server-side with the correct JDK. Download a ready-to-use .jar, not just source code.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+        </div>
+        <h3>Full Project</h3>
+        <p>Includes build.gradle, settings.gradle, gradlew, gradlew.bat, and all wrapper files. Open in any IDE instantly.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        </div>
+        <h3>Multi-Loader</h3>
+        <p>Forge, Fabric, and NeoForge all supported with correct build configurations, mappings, and APIs per version.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+        </div>
+        <h3>Dynamic Versions</h3>
+        <p>MC version lists are fetched live from Forge, Fabric, and NeoForge's official APIs. Always up to date.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Loaders section -->
+  <section id="loaders" class="loaders-section">
+    <div class="section-label">Supported Loaders</div>
+    <h2 class="section-title">Pick your platform</h2>
+    <div class="loaders-grid">
+      <div class="loader-card loader-forge">
+        <div class="loader-header">
+          <div class="loader-badge">FORGE</div>
+          <span class="loader-since">Since MC 1.1</span>
+        </div>
+        <p>The original Minecraft mod loader. Massive ecosystem, Forge mods, and full support from 1.7 to the latest versions.</p>
+        <div class="loader-tags"><span>ForgeGradle</span><span>Mixins</span><span>Events API</span></div>
+      </div>
+      <div class="loader-card loader-fabric">
+        <div class="loader-header">
+          <div class="loader-badge">FABRIC</div>
+          <span class="loader-since">Since MC 1.14</span>
+        </div>
+        <p>Lightweight and fast. Fabric is the modern choice for performance mods and newer Minecraft versions.</p>
+        <div class="loader-tags"><span>Loom</span><span>Yarn Mappings</span><span>Fabric API</span></div>
+      </div>
+      <div class="loader-card loader-neo">
+        <div class="loader-header">
+          <div class="loader-badge">NEOFORGE</div>
+          <span class="loader-since">Since MC 1.20.2</span>
+        </div>
+        <p>The spiritual successor to Forge. NeoForge focuses on modern Java, better performance, and an active development team.</p>
+        <div class="loader-tags"><span>NeoGradle</span><span>ModDevGradle</span><span>Events</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA section -->
+  <section class="cta-section">
+    <h2>Ready to build your first mod?</h2>
+    <p>No Java experience required. Just describe what you want.</p>
+    <button class="btn-primary btn-large" onclick="showApp()">
+      Open CodexMC
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+    </button>
+  </section>
+
+  <footer class="landing-footer">
+    <div class="footer-logo">
+      <span class="logo-bracket">[</span>CodexMC<span class="logo-bracket">]</span>
+    </div>
+    <p>Built with Claude claude-sonnet-4-20250514 · Minecraft mod generation · Open source</p>
+  </footer>
+</div>
+
+<!-- ══════════════════════════════════════════════════════ APP PAGE -->
+<div id="app-page" style="display:none">
+
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <button class="back-btn" onclick="showLanding()" title="Back to home">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+      </button>
+      <div class="sidebar-logo">
+        <span class="logo-bracket">[</span>CodexMC<span class="logo-bracket">]</span>
+      </div>
+    </div>
+
+    <button class="new-chat-btn" onclick="newSession()">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      New Mod
+    </button>
+
+    <div class="sidebar-section-label">History</div>
+    <div class="chat-history" id="chat-history">
+      <div class="history-empty">No mods generated yet</div>
+    </div>
+
+    <div class="sidebar-footer">
+      <div class="sidebar-status">
+        <span class="status-dot" id="status-dot"></span>
+        <span id="status-text">Connecting...</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main area -->
+  <main class="main-area">
+
+    <!-- Top bar -->
+    <div class="topbar">
+      <button class="sidebar-toggle" onclick="toggleSidebar()">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+      <div class="topbar-title" id="topbar-title">CodexMC — Mod Generator</div>
+      <div class="topbar-controls">
+        <div class="jdk-indicator" title="JDK versions available">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
+          JDK 8/17/21/25
+        </div>
+      </div>
+    </div>
+
+    <!-- Conversation area -->
+    <div class="conversation-area" id="conversation-area">
+      <!-- Welcome state -->
+      <div class="welcome-state" id="welcome-state">
+        <div class="welcome-icon">
+          <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6M9 12h6M9 15h4"/></svg>
+        </div>
+        <h2>What mod do you want to build?</h2>
+        <p>Describe your idea and select your loader & Minecraft version below.</p>
+        <div class="example-prompts">
+          <button class="example-btn" onclick="useExample(this)">A sword that strikes lightning on hit</button>
+          <button class="example-btn" onclick="useExample(this)">A backpack item with 27 inventory slots</button>
+          <button class="example-btn" onclick="useExample(this)">Magic wand that teleports you where you look</button>
+          <button class="example-btn" onclick="useExample(this)">Custom biome with giant mushroom trees</button>
+          <button class="example-btn" onclick="useExample(this)">Jetpack item with fuel system</button>
+          <button class="example-btn" onclick="useExample(this)">Ore that only spawns near diamonds</button>
+        </div>
+      </div>
+
+      <!-- Messages will render here -->
+      <div class="messages" id="messages"></div>
+    </div>
+
+    <!-- Input area -->
+    <div class="input-area">
+      <div class="input-controls">
+        <div class="select-group">
+          <label>Loader</label>
+          <select id="loader-select" onchange="onLoaderChange()">
+            <option value="forge">Forge</option>
+            <option value="fabric">Fabric</option>
+            <option value="neoforge">NeoForge</option>
+          </select>
+        </div>
+        <div class="select-group">
+          <label>MC Version</label>
+          <select id="version-select">
+            <option value="">Loading versions...</option>
+          </select>
+        </div>
+      </div>
+      <div class="input-row">
+        <div class="textarea-wrapper">
+          <textarea
+            id="prompt-input"
+            placeholder="Describe your mod idea... e.g. 'A sword that shoots fireballs when right-clicked'"
+            rows="1"
+            onkeydown="handleInputKey(event)"
+            oninput="autoResize(this)"
+          ></textarea>
+        </div>
+        <button class="send-btn" id="send-btn" onclick="sendPrompt()" title="Generate Mod">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13"/><path d="M22 2L15 22 11 13 2 9z"/></svg>
+        </button>
+      </div>
+      <div class="input-footer">
+        <span>CodexMC uses Claude claude-sonnet-4-20250514 · Press <kbd>Ctrl</kbd>+<kbd>Enter</kbd> to generate</span>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
