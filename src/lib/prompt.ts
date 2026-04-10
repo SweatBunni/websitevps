@@ -86,6 +86,9 @@ Rules:
 - Use forward slashes in paths.
 - Do not use paths containing "..".
 - Each fenced block must contain the COMPLETE file content, not a diff or partial snippet.
+- Verify API/mapping choices against the selected loader and Minecraft version before writing code.
+- If a class or package is uncertain for the selected version, prefer stable vanilla APIs and avoid guessing unavailable loader-only symbols.
+- Keep Gradle dependencies consistent with the chosen loader/version coordinates from project properties.
 - After coding, remind the user they can press Build in CodexMC to produce a JAR.
 
 You may explain plans in normal text outside the fences.`;

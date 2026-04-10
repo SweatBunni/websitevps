@@ -54,6 +54,10 @@ function timeAgo(ts: number): string {
 }
 
 export default function StudioClient() {
+  const chatRetryMs = Number.parseInt(
+    process.env.NEXT_PUBLIC_CHAT_RETRY_MS ?? "900",
+    10,
+  );
   const [sessionId, setSessionId] = useState("");
   const [loader, setLoader] = useState<Loader>("fabric");
   const [version, setVersion] = useState("");
@@ -258,11 +262,28 @@ export default function StudioClient() {
     }));
 
     try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId, loader, version, messages: core }),
-      });
+      const doChatFetch = () =>
+        fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId, loader, version, messages: core }),
+          cache: "no-store",
+        });
+
+      let res: Response;
+      try {
+        res = await doChatFetch();
+      } catch (firstErr) {
+        // Network hiccups are common on long-lived streamed routes; retry once.
+        appendLog("[codexmc] Chat transport error, retrying once…");
+        await new Promise((r) =>
+          setTimeout(r, Number.isFinite(chatRetryMs) ? chatRetryMs : 900),
+        );
+        res = await doChatFetch();
+        if (firstErr instanceof Error) {
+          appendLog(`[codexmc] First chat attempt failed: ${firstErr.message}`);
+        }
+      }
 
       if (!res.ok) {
         const errText = await res.text();
