@@ -39,10 +39,3 @@ export function resolveOllamaModelCandidates(): string[] {
 
 /** Ollama ignores the key; the SDK requires a non-empty string. */
 export const OLLAMA_DUMMY_API_KEY = "ollama";
-
-/** `AI_PROVIDER=ollama` or `local` uses Ollama; anything else uses OpenRouter. */
-export function resolveAiBackend(): "ollama" | "openrouter" {
-  const v = process.env.AI_PROVIDER?.trim().toLowerCase();
-  if (v === "ollama" || v === "local") return "ollama";
-  return "openrouter";
-}

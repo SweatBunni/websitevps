@@ -5,8 +5,6 @@ import { applyGeneratedFiles } from "@/lib/workspace";
 
 type OpenAiCompatProvider = ReturnType<typeof createOpenAI>;
 
-const OPENROUTER_FAILURE_HINT = `_Free “:free” endpoints are often rate-limited (HTTP 429). Wait and retry, set \`AI_MODEL_FALLBACKS\` in \`.env\`, switch to local \`AI_PROVIDER=ollama\`, or add OpenRouter credits / BYOK: https://openrouter.ai/settings/integrations_`;
-
 const OLLAMA_FAILURE_HINT = `_Check that Ollama is running (\`ollama serve\`), reachable at \`OLLAMA_BASE_URL\`, and that you have pulled a model (e.g. \`ollama pull llama3.2\`). List models: \`ollama list\`._`;
 
 export type LlmChatStreamOptions = {
@@ -16,16 +14,13 @@ export type LlmChatStreamOptions = {
   messages: ModelMessage[];
   sessionId: string;
   maxRetries: number;
-  /** Shown after all models fail */
-  failureHint?: "openrouter" | "ollama";
 };
 
 /** Try each model until one completes; surfaces errors as next-model hints. */
 export async function* streamChatWithModelFallbacks(
   options: LlmChatStreamOptions,
 ): AsyncGenerator<string, void, undefined> {
-  const { llm, modelIds, system, messages, sessionId, maxRetries, failureHint } =
-    options;
+  const { llm, modelIds, system, messages, sessionId, maxRetries } = options;
   let lastErr: unknown;
 
   for (let i = 0; i < modelIds.length; i++) {
@@ -62,9 +57,7 @@ export async function* streamChatWithModelFallbacks(
 
   const msg =
     lastErr instanceof Error ? lastErr.message : String(lastErr ?? "Unknown error");
-  const hint =
-    failureHint === "ollama" ? OLLAMA_FAILURE_HINT : OPENROUTER_FAILURE_HINT;
-  yield `\n\n**All configured models failed.** ${msg}\n\n${hint}\n`;
+  yield `\n\n**All configured models failed.** ${msg}\n\n${OLLAMA_FAILURE_HINT}\n`;
 }
 
 export function buildLlmChatResponse(options: LlmChatStreamOptions): Response {

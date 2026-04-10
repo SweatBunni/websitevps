@@ -316,10 +316,9 @@ export default function StudioClient() {
         <div className="mt-auto border-t border-[var(--border)] p-3 text-xs leading-relaxed text-[var(--muted)]">
           {jdkHint && <p className="mb-2">{jdkHint}</p>}
           <p>
-            <code className="font-mono text-[var(--foreground)]">AI_PROVIDER=ollama</code> uses
-            your VPS Ollama (<code className="font-mono">OLLAMA_MODEL</code>,{" "}
-            <code className="font-mono">OLLAMA_BASE_URL</code>). Otherwise use OpenRouter +{" "}
-            <code className="font-mono">OPENROUTER_API_KEY</code>; free routes may return HTTP 429.
+            CodexMC is Ollama-only. Set{" "}
+            <code className="font-mono text-[var(--foreground)]">OLLAMA_MODEL</code> and{" "}
+            <code className="font-mono">OLLAMA_BASE_URL</code> on your VPS.
           </p>
         </div>
       </aside>

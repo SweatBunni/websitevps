@@ -18,8 +18,8 @@ const features = [
     body: "Run Gradle builds from the UI with a live console. Point JAVA_HOME at Temurin 21 or 25 using the bundled JDK setup script.",
   },
   {
-    title: "Free coding models via OpenRouter",
-    body: "Defaults to a strong free coder on OpenRouter; swap AI_MODEL for any OpenRouter id when you want a different balance of speed and quality.",
+    title: "Ollama-first local inference",
+    body: "CodexMC runs against Ollama on your VPS by default, with Qwen coder models and configurable fallbacks.",
   },
   {
     title: "Chat-first workflow",
