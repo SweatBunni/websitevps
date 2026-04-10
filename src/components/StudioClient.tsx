@@ -71,6 +71,7 @@ export default function StudioClient() {
   const [savedChats, setSavedChats] = useState<SavedChat[]>([]);
   const consoleRef = useRef<HTMLPreElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const buildLogRef = useRef<string[]>([]);
 
   // Load chat history from localStorage on mount
   useEffect(() => {
@@ -234,15 +235,96 @@ export default function StudioClient() {
 
   const ingestBuildLine = useCallback((line: string) => {
     appendLog(line);
+    buildLogRef.current.push(line);
     if (line.includes("[codexmc] BUILD_RESULT:ok")) setJarReady(true);
     if (line.includes("[codexmc] BUILD_RESULT:fail")) setJarReady(false);
   }, [appendLog]);
 
-  const runBuild = async () => {
+  // Shared AI streaming logic used by send() and auto-fix
+  const sendToAi = useCallback(async (
+    userText: string,
+    currentMessages: UiMsg[],
+  ): Promise<UiMsg[]> => {
+    const userMsg: UiMsg = { id: uid(), role: "user", content: userText };
+    const nextMessages = [...currentMessages, userMsg];
+    setMessages(nextMessages);
+    setBusy(true);
+    setDraftAssistant("");
+    appendLog("[codexmc] AI request started…");
+
+    const core: ModelMessage[] = nextMessages.map((m) => ({
+      role: m.role,
+      content: m.content,
+    }));
+
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId, loader, version, messages: core }),
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        let msg = errText;
+        try { msg = JSON.parse(errText).error ?? errText; } catch { /* plain */ }
+        appendLog(`[codexmc] Chat error: ${msg}`);
+        const errMsg: UiMsg = { id: uid(), role: "assistant", content: `**Error:** ${msg}` };
+        const final = [...nextMessages, errMsg];
+        setMessages(final);
+        setDraftAssistant(null);
+        return final;
+      }
+
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder();
+      let full = "";
+      if (!reader) { setDraftAssistant(null); return nextMessages; }
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        full += decoder.decode(value, { stream: true });
+        setDraftAssistant(full);
+      }
+      setDraftAssistant(null);
+      const assistantMsg: UiMsg = { id: uid(), role: "assistant", content: full };
+      const final = [...nextMessages, assistantMsg];
+      setMessages(final);
+      appendLog("[codexmc] AI response finished (files applied if fenced blocks were present).");
+      return final;
+    } catch (e) {
+      appendLog(`[codexmc] Chat failed: ${e instanceof Error ? e.message : String(e)}`);
+      setDraftAssistant(null);
+      return nextMessages;
+    } finally {
+      setBusy(false);
+    }
+  }, [sessionId, loader, version, appendLog]);
+
+  const fixBuildErrors = useCallback(async (
+    buildLines: string[],
+    currentMessages: UiMsg[],
+  ): Promise<UiMsg[]> => {
+    // Focus on the most useful lines; cap at 80 to keep prompt reasonable
+    const relevant = buildLines.filter((l) =>
+      /error:|ERROR|FAILED|Exception|> Task|warning:/.test(l)
+    );
+    const block = (relevant.length > 0 ? relevant : buildLines).slice(-80).join("\n");
+    appendLog("[codexmc] —— Asking AI to fix build errors ——");
+    const prompt =
+      `The Gradle build just failed. Here is the build output:\n\n\`\`\`\n${block}\n\`\`\`\n\n` +
+      `Please analyse the errors, fix the affected source files, and output every corrected file ` +
+      `using the codexmc fenced block format so they are applied to the workspace automatically.`;
+    return sendToAi(prompt, currentMessages);
+  }, [appendLog, sendToAi]);
+
+  const runBuild = useCallback(async (autoFix = false, currentMessages = messages) => {
     if (!sessionId) return;
     setBuildBusy(true);
     setJarReady(false);
+    buildLogRef.current = [];
     appendLog("[codexmc] —— Build started ——");
+    let failed = false;
     try {
       const res = await fetch("/api/build", {
         method: "POST",
@@ -252,6 +334,7 @@ export default function StudioClient() {
       if (!res.ok) {
         const t = await res.text();
         appendLog(`[codexmc] Build HTTP ${res.status}: ${t}`);
+        failed = true;
         return;
       }
       const reader = res.body?.getReader();
@@ -267,14 +350,23 @@ export default function StudioClient() {
         for (const line of parts) ingestBuildLine(line);
       }
       if (buf) ingestBuildLine(buf);
+      failed = buildLogRef.current.some((l) => l.includes("[codexmc] BUILD_RESULT:fail"));
     } catch (e) {
       appendLog(`[codexmc] Build error: ${e instanceof Error ? e.message : String(e)}`);
       setJarReady(false);
+      failed = true;
     } finally {
       appendLog("[codexmc] —— Build finished ——");
       setBuildBusy(false);
     }
-  };
+
+    if (failed && autoFix) {
+      const capturedLog = [...buildLogRef.current];
+      const updatedMessages = await fixBuildErrors(capturedLog, currentMessages);
+      appendLog("[codexmc] —— Auto-rebuilding after AI fix ——");
+      await runBuild(false, updatedMessages);
+    }
+  }, [sessionId, appendLog, ingestBuildLine, fixBuildErrors, messages]);
 
   const downloadJar = async () => {
     if (!sessionId || !jarReady) return;
@@ -315,53 +407,7 @@ export default function StudioClient() {
     const text = input.trim();
     if (!text || !sessionId || !version || busy) return;
     setInput("");
-    const userMsg: UiMsg = { id: uid(), role: "user", content: text };
-    setMessages((m) => [...m, userMsg]);
-    setBusy(true);
-    setDraftAssistant("");
-    appendLog("[codexmc] AI request started…");
-
-    const core: ModelMessage[] = [...messages, userMsg].map((m) => ({
-      role: m.role,
-      content: m.content,
-    }));
-
-    try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId, loader, version, messages: core }),
-      });
-
-      if (!res.ok) {
-        const errText = await res.text();
-        let msg = errText;
-        try { msg = JSON.parse(errText).error ?? errText; } catch { /* plain */ }
-        appendLog(`[codexmc] Chat error: ${msg}`);
-        setDraftAssistant(null);
-        setMessages((m) => [...m, { id: uid(), role: "assistant", content: `**Error:** ${msg}` }]);
-        return;
-      }
-
-      const reader = res.body?.getReader();
-      const decoder = new TextDecoder();
-      let full = "";
-      if (!reader) { setDraftAssistant(null); return; }
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        full += decoder.decode(value, { stream: true });
-        setDraftAssistant(full);
-      }
-      setDraftAssistant(null);
-      setMessages((m) => [...m, { id: uid(), role: "assistant", content: full }]);
-      appendLog("[codexmc] AI response finished (files applied if fenced blocks were present).");
-    } catch (e) {
-      appendLog(`[codexmc] Chat failed: ${e instanceof Error ? e.message : String(e)}`);
-      setDraftAssistant(null);
-    } finally {
-      setBusy(false);
-    }
+    await sendToAi(text, messages);
   };
 
   return (
@@ -468,11 +514,11 @@ export default function StudioClient() {
           </button>
           <button
             type="button"
-            onClick={() => void runBuild()}
-            disabled={buildBusy || !sessionId}
+            onClick={() => void runBuild(true)}
+            disabled={buildBusy || busy || !sessionId}
             className="rounded-lg bg-[var(--accent)] px-4 py-1.5 text-sm font-semibold text-[#06261a] disabled:opacity-50"
           >
-            {buildBusy ? "Building…" : "Build JAR"}
+            {buildBusy ? "Building…" : busy ? "AI fixing…" : "Build JAR"}
           </button>
           <button
             type="button"
