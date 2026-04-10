@@ -36,7 +36,7 @@ OPENROUTER_API_KEY=sk-or-...
 Full options:
 ```
 OPENROUTER_API_KEY=sk-or-...          # required
-OPENROUTER_MODEL=deepseek/deepseek-coder:free
+OPENROUTER_MODEL=deepseek/deepseek-chat:free
 OPENROUTER_HTTP_REFERER=https://your-domain.com
 OPENROUTER_APP_TITLE=CodexMC
 PORT=3000
