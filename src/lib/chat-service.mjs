@@ -1,6 +1,6 @@
 import { rememberChatInteraction } from './site-memory.mjs';
 
-const DEFAULT_MODEL = 'deepseek/deepseek-chat:free';
+const DEFAULT_MODEL = 'qwen/qwen3-coder:free';
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const MAX_CHAT_RETRIES = 4;
 const DEFAULT_MAX_TOKENS = 4096;

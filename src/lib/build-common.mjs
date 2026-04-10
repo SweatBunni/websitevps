@@ -514,7 +514,7 @@ async function requestBuildFix({ apiKey, loader, version, modName, conversation,
     .map(a => ({ attempt: a.attempt, summary: a.fixSummary, changedFiles: a.changedFiles || [] }));
 
   const requestBody = {
-    model: process.env.OPENROUTER_MODEL || 'deepseek/deepseek-chat:free',
+    model: process.env.OPENROUTER_MODEL || 'qwen/qwen3-coder:free',
     temperature: 0.1,
     max_tokens: 3000,
     messages: [
