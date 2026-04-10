@@ -7,7 +7,7 @@ const GRADLE = {
   /** Fabric Loom 1.16+ (MC year releases) requires Gradle 9.4+ plugin API. */
   fabricLoomModern: "9.4.0",
   /** Loom 1.9–1.15, Forge, NeoForge, most MDKs. */
-  defaultStable: "8.11.1",
+  defaultStable: "8.14",
   /** Older Forge lines sometimes validated against 8.8.x in MDKs. */
   forgeLegacy: "8.8.1",
 } as const;
