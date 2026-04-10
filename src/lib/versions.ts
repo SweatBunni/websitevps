@@ -163,12 +163,17 @@ function pickLoomForMc(mcVersion: string, loomVersions: string[]): string {
       if (!m) return false;
       return m[1] === "1" && parseInt(m[2], 10) >= 15;
     });
-  } else if (mcVersion.startsWith("1.21.")) {
+  } else if (
+    mcVersion.startsWith("1.21.") ||
+    mcVersion.startsWith("1.22.") ||
+    mcVersion.startsWith("1.23.")
+  ) {
+    // Classic 1.21+ patch releases: Loom 1.14+ targets year-based MC (26.x), not 1.21.11.
     candidates = sorted.filter((v) => {
       const m = /^(\d+)\.(\d+)/.exec(v);
       if (!m) return false;
       const minor = parseInt(m[2], 10);
-      return m[1] === "1" && minor >= 9 && minor <= 17;
+      return m[1] === "1" && minor >= 9 && minor <= 13;
     });
   } else if (mcVersion.startsWith("1.20.")) {
     candidates = sorted.filter((v) => {

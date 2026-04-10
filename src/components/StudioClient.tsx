@@ -26,6 +26,7 @@ export default function StudioClient() {
   const [buildBusy, setBuildBusy] = useState(false);
   const [consoleLines, setConsoleLines] = useState<string[]>([]);
   const [jdkHint, setJdkHint] = useState<string | null>(null);
+  const [jarReady, setJarReady] = useState(false);
   const consoleRef = useRef<HTMLPreElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -89,6 +90,7 @@ export default function StudioClient() {
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || res.statusText);
         appendLog("[codexmc] Workspace ready (Gradle template copied).");
+        setJarReady(false);
       } catch (e) {
         appendLog(
           `[codexmc] Init failed: ${e instanceof Error ? e.message : String(e)}`,
@@ -138,12 +140,20 @@ export default function StudioClient() {
     setMessages([]);
     setDraftAssistant(null);
     setInput("");
+    setJarReady(false);
     appendLog("[codexmc] New chat session (workspace will re-initialize).");
   };
+
+  const ingestBuildLine = useCallback((line: string) => {
+    appendLog(line);
+    if (line.includes("[codexmc] BUILD_RESULT:ok")) setJarReady(true);
+    if (line.includes("[codexmc] BUILD_RESULT:fail")) setJarReady(false);
+  }, [appendLog]);
 
   const runBuild = async () => {
     if (!sessionId) return;
     setBuildBusy(true);
+    setJarReady(false);
     appendLog("[codexmc] —— Build started ——");
     try {
       const res = await fetch("/api/build", {
@@ -166,14 +176,50 @@ export default function StudioClient() {
         buf += dec.decode(value, { stream: true });
         const parts = buf.split("\n");
         buf = parts.pop() ?? "";
-        for (const line of parts) appendLog(line);
+        for (const line of parts) ingestBuildLine(line);
       }
-      if (buf) appendLog(buf);
+      if (buf) ingestBuildLine(buf);
     } catch (e) {
       appendLog(`[codexmc] Build error: ${e instanceof Error ? e.message : String(e)}`);
+      setJarReady(false);
     } finally {
       appendLog("[codexmc] —— Build finished ——");
       setBuildBusy(false);
+    }
+  };
+
+  const downloadJar = async () => {
+    if (!sessionId || !jarReady) return;
+    appendLog("[codexmc] Preparing download…");
+    try {
+      const res = await fetch(
+        `/api/artifact?sessionId=${encodeURIComponent(sessionId)}`,
+      );
+      if (!res.ok) {
+        const err = (await res.json().catch(() => ({}))) as { error?: string };
+        appendLog(
+          `[codexmc] Download failed: ${err.error ?? res.statusText}`,
+        );
+        return;
+      }
+      const cd = res.headers.get("Content-Disposition");
+      const quoted = cd?.match(/filename="([^"]+)"/i);
+      const filename = quoted?.[1] ?? "mod.jar";
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.rel = "noopener";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      appendLog(`[codexmc] Download started (${filename}).`);
+    } catch (e) {
+      appendLog(
+        `[codexmc] Download error: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
   };
 
@@ -270,10 +316,10 @@ export default function StudioClient() {
         <div className="mt-auto border-t border-[var(--border)] p-3 text-xs leading-relaxed text-[var(--muted)]">
           {jdkHint && <p className="mb-2">{jdkHint}</p>}
           <p>
-            Set <code className="font-mono text-[var(--foreground)]">OPENROUTER_API_KEY</code>
-            . Free <code className="font-mono">:free</code> models can hit HTTP 429; CodexMC tries{" "}
-            <code className="font-mono">AI_MODEL_FALLBACKS</code> then other free coders. Add credits
-            or BYOK on OpenRouter for stable throughput.
+            <code className="font-mono text-[var(--foreground)]">AI_PROVIDER=ollama</code> uses
+            your VPS Ollama (<code className="font-mono">OLLAMA_MODEL</code>,{" "}
+            <code className="font-mono">OLLAMA_BASE_URL</code>). Otherwise use OpenRouter +{" "}
+            <code className="font-mono">OPENROUTER_API_KEY</code>; free routes may return HTTP 429.
           </p>
         </div>
       </aside>
@@ -322,6 +368,19 @@ export default function StudioClient() {
             className="rounded-lg bg-[var(--accent)] px-4 py-1.5 text-sm font-semibold text-[#06261a] disabled:opacity-50"
           >
             {buildBusy ? "Building…" : "Build JAR"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void downloadJar()}
+            disabled={!jarReady || !sessionId}
+            title={
+              jarReady
+                ? "Download the mod JAR from this session"
+                : "Run a successful build first"
+            }
+            className="rounded-lg border border-[var(--accent-dim)] bg-[var(--surface)] px-4 py-1.5 text-sm font-semibold text-[var(--accent)] disabled:opacity-40"
+          >
+            Download JAR
           </button>
         </header>
 

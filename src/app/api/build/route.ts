@@ -18,6 +18,11 @@ export async function POST(req: Request) {
       try {
         const { code } = await runGradleBuild(body.sessionId!, send);
         send(`[codexmc] Gradle exited with code ${code ?? "unknown"}.`);
+        send(
+          code === 0
+            ? "[codexmc] BUILD_RESULT:ok"
+            : "[codexmc] BUILD_RESULT:fail",
+        );
       } catch (e) {
         send(
           `[codexmc] Build error: ${e instanceof Error ? e.message : String(e)}`,

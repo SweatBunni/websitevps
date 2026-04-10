@@ -26,10 +26,6 @@ export function resolveOpenRouterApiKey(): string | undefined {
   return undefined;
 }
 
-/**
- * OpenRouter rejects some Chat Completions fields OpenAI sends (e.g. stream_options).
- * Strip them so streaming still works.
- */
 /** Primary model from env, then fallbacks (comma-separated AI_MODEL_FALLBACKS), then built-ins. */
 export function resolveOpenRouterModelCandidates(): string[] {
   const primary = process.env.AI_MODEL?.trim();
@@ -47,23 +43,4 @@ export function resolveOpenRouterModelCandidates(): string[] {
     if (m && !out.includes(m)) out.push(m);
   }
   return out;
-}
-
-export function createOpenRouterFetch(): typeof fetch {
-  return (input, init) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-    if (!url.includes("openrouter.ai") || !init?.body || typeof init.body !== "string") {
-      return fetch(input, init);
-    }
-    try {
-      const parsed = JSON.parse(init.body) as Record<string, unknown>;
-      if ("stream_options" in parsed) {
-        delete parsed.stream_options;
-        return fetch(input, { ...init, body: JSON.stringify(parsed) });
-      }
-    } catch {
-      /* use original body */
-    }
-    return fetch(input, init);
-  };
 }

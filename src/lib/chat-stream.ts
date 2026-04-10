@@ -3,22 +3,29 @@ import { createTextStreamResponse, streamText, type ModelMessage } from "ai";
 import { extractCodexMcFiles } from "@/lib/parse-codexmc";
 import { applyGeneratedFiles } from "@/lib/workspace";
 
-type OpenRouter = ReturnType<typeof createOpenAI>;
+type OpenAiCompatProvider = ReturnType<typeof createOpenAI>;
 
-export type OpenRouterChatStreamOptions = {
-  openrouter: OpenRouter;
+const OPENROUTER_FAILURE_HINT = `_Free “:free” endpoints are often rate-limited (HTTP 429). Wait and retry, set \`AI_MODEL_FALLBACKS\` in \`.env\`, switch to local \`AI_PROVIDER=ollama\`, or add OpenRouter credits / BYOK: https://openrouter.ai/settings/integrations_`;
+
+const OLLAMA_FAILURE_HINT = `_Check that Ollama is running (\`ollama serve\`), reachable at \`OLLAMA_BASE_URL\`, and that you have pulled a model (e.g. \`ollama pull llama3.2\`). List models: \`ollama list\`._`;
+
+export type LlmChatStreamOptions = {
+  llm: OpenAiCompatProvider;
   modelIds: string[];
   system: string;
   messages: ModelMessage[];
   sessionId: string;
   maxRetries: number;
+  /** Shown after all models fail */
+  failureHint?: "openrouter" | "ollama";
 };
 
-/** Try each model until one completes; surfaces 429/provider errors as next-model hints. */
+/** Try each model until one completes; surfaces errors as next-model hints. */
 export async function* streamChatWithModelFallbacks(
-  options: OpenRouterChatStreamOptions,
+  options: LlmChatStreamOptions,
 ): AsyncGenerator<string, void, undefined> {
-  const { openrouter, modelIds, system, messages, sessionId, maxRetries } = options;
+  const { llm, modelIds, system, messages, sessionId, maxRetries, failureHint } =
+    options;
   let lastErr: unknown;
 
   for (let i = 0; i < modelIds.length; i++) {
@@ -26,7 +33,7 @@ export async function* streamChatWithModelFallbacks(
     let acc = "";
     try {
       const result = streamText({
-        model: openrouter.chat(modelId),
+        model: llm.chat(modelId),
         system,
         messages,
         maxRetries,
@@ -55,12 +62,12 @@ export async function* streamChatWithModelFallbacks(
 
   const msg =
     lastErr instanceof Error ? lastErr.message : String(lastErr ?? "Unknown error");
-  yield `\n\n**All configured models failed.** ${msg}\n\n_Free “:free” endpoints are often rate-limited (HTTP 429). Wait and retry, set \`AI_MODEL_FALLBACKS\` in \`.env\`, or add OpenRouter credits / provider keys (BYOK): https://openrouter.ai/settings/integrations_\n`;
+  const hint =
+    failureHint === "ollama" ? OLLAMA_FAILURE_HINT : OPENROUTER_FAILURE_HINT;
+  yield `\n\n**All configured models failed.** ${msg}\n\n${hint}\n`;
 }
 
-export function buildOpenRouterChatResponse(
-  options: OpenRouterChatStreamOptions,
-): Response {
+export function buildLlmChatResponse(options: LlmChatStreamOptions): Response {
   const textStream = new ReadableStream<string>({
     async start(controller) {
       try {

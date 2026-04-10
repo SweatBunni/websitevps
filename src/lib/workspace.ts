@@ -8,6 +8,7 @@ import {
   templatesDir,
   workspaceDir,
 } from "./paths";
+import { alignGradleWrapper } from "./gradle-align";
 import {
   parseForgeCoordinates,
   parseNeoMcFromNeoVersion,
@@ -37,23 +38,35 @@ export async function initWorkspace(
   const propsPath = path.join(root, "gradle.properties");
   let props = await readFile(propsPath, "utf8");
 
+  let fabricLoom: string | undefined;
+  let mcForGradle: string | undefined;
+
   if (loader === "fabric") {
     const v = await resolveFabricVersions(versionValue);
+    fabricLoom = v.loom_version;
     props = setProp(props, "minecraft_version", versionValue);
     props = setProp(props, "loader_version", v.loader_version);
     props = setProp(props, "fabric_api_version", v.fabric_api_version);
     props = setProp(props, "loom_version", v.loom_version);
   } else if (loader === "forge") {
     const { minecraft_version, forge_version } = parseForgeCoordinates(versionValue);
+    mcForGradle = minecraft_version;
     props = setProp(props, "minecraft_version", minecraft_version);
     props = setProp(props, "forge_version", forge_version);
   } else {
     props = setProp(props, "neo_version", versionValue);
     const { minecraft_version } = parseNeoMcFromNeoVersion(versionValue);
+    mcForGradle = minecraft_version;
     props = setProp(props, "minecraft_version", minecraft_version);
   }
 
   await writeFile(propsPath, props, "utf8");
+
+  await alignGradleWrapper(root, loader, {
+    fabricLoomVersion: fabricLoom,
+    minecraftVersion: mcForGradle,
+  });
+
   return root;
 }
 
