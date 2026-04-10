@@ -18,8 +18,8 @@ const features = [
     body: "Run Gradle builds from the UI with a live console. Point JAVA_HOME at Temurin 21 or 25 using the bundled JDK setup script.",
   },
   {
-    title: "Ollama-first local inference",
-    body: "CodexMC runs against Ollama on your VPS by default, with Qwen coder models and configurable fallbacks.",
+    title: "Mistral coding intelligence",
+    body: "CodexMC uses Mistral coding models (Codestral by default) with optional model fallbacks for reliability.",
   },
   {
     title: "Chat-first workflow",

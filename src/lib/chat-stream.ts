@@ -5,7 +5,7 @@ import { applyGeneratedFiles } from "@/lib/workspace";
 
 type OpenAiCompatProvider = ReturnType<typeof createOpenAI>;
 
-const OLLAMA_FAILURE_HINT = `_Check that Ollama is running (\`ollama serve\`), reachable at \`OLLAMA_BASE_URL\`, and that you have pulled a model (e.g. \`ollama pull llama3.2\`). List models: \`ollama list\`._`;
+const MISTRAL_FAILURE_HINT = `_Check \`MISTRAL_API_KEY\` and your model id (default \`codestral-latest\`). You can set \`MISTRAL_MODEL\` and optional \`MISTRAL_MODEL_FALLBACKS\` in \`.env\`._`;
 
 export type LlmChatStreamOptions = {
   llm: OpenAiCompatProvider;
@@ -57,7 +57,7 @@ export async function* streamChatWithModelFallbacks(
 
   const msg =
     lastErr instanceof Error ? lastErr.message : String(lastErr ?? "Unknown error");
-  yield `\n\n**All configured models failed.** ${msg}\n\n${OLLAMA_FAILURE_HINT}\n`;
+  yield `\n\n**All configured models failed.** ${msg}\n\n${MISTRAL_FAILURE_HINT}\n`;
 }
 
 export function buildLlmChatResponse(options: LlmChatStreamOptions): Response {

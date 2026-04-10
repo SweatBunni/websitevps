@@ -468,9 +468,9 @@ export default function StudioClient() {
         <div className="border-t border-[var(--border)] p-3 text-xs leading-relaxed text-[var(--muted)]">
           {jdkHint && <p className="mb-2">{jdkHint}</p>}
           <p>
-            CodexMC is Ollama-only. Set{" "}
-            <code className="font-mono text-[var(--foreground)]">OLLAMA_MODEL</code> and{" "}
-            <code className="font-mono">OLLAMA_BASE_URL</code> on your VPS.
+            CodexMC uses Mistral coding models. Set{" "}
+            <code className="font-mono text-[var(--foreground)]">MISTRAL_API_KEY</code> and
+            optional <code className="font-mono">MISTRAL_MODEL</code>.
           </p>
         </div>
       </aside>

@@ -1,6 +1,6 @@
 /**
  * @ai-sdk/openai adds stream_options to chat/completions; many OpenAI-compatible
- * servers (including Ollama and vLLM) do not accept it.
+ * servers (including many OpenAI-compatible runtimes) do not accept it.
  */
 export function createChatCompletionsCompatibleFetch(): typeof fetch {
   return (input, init) => {
