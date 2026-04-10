@@ -8,8 +8,49 @@ type Loader = "fabric" | "forge" | "neoforge";
 type VerOpt = { value: string; label: string };
 type UiMsg = { id: string; role: "user" | "assistant"; content: string };
 
-function id() {
+type SavedChat = {
+  sessionId: string;
+  title: string;
+  loader: Loader;
+  version: string;
+  messages: UiMsg[];
+  updatedAt: number;
+};
+
+const CHATS_KEY = "codexmc:chats";
+
+function uid() {
   return crypto.randomUUID();
+}
+
+function loadChats(): SavedChat[] {
+  try {
+    return JSON.parse(localStorage.getItem(CHATS_KEY) ?? "[]") as SavedChat[];
+  } catch {
+    return [];
+  }
+}
+
+function saveChats(chats: SavedChat[]) {
+  try {
+    localStorage.setItem(CHATS_KEY, JSON.stringify(chats));
+  } catch {}
+}
+
+function chatTitle(messages: UiMsg[]): string {
+  const first = messages.find((m) => m.role === "user");
+  if (!first) return "New chat";
+  return first.content.slice(0, 40) + (first.content.length > 40 ? "…" : "");
+}
+
+function timeAgo(ts: number): string {
+  const diff = Date.now() - ts;
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
 }
 
 export default function StudioClient() {
@@ -27,8 +68,34 @@ export default function StudioClient() {
   const [consoleLines, setConsoleLines] = useState<string[]>([]);
   const [jdkHint, setJdkHint] = useState<string | null>(null);
   const [jarReady, setJarReady] = useState(false);
+  const [savedChats, setSavedChats] = useState<SavedChat[]>([]);
   const consoleRef = useRef<HTMLPreElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  // Load chat history from localStorage on mount
+  useEffect(() => {
+    setSavedChats(loadChats());
+  }, []);
+
+  // Persist current chat whenever messages change
+  useEffect(() => {
+    if (!sessionId || messages.length === 0) return;
+    setSavedChats((prev) => {
+      const updated: SavedChat = {
+        sessionId,
+        title: chatTitle(messages),
+        loader,
+        version,
+        messages,
+        updatedAt: Date.now(),
+      };
+      const rest = prev.filter((c) => c.sessionId !== sessionId);
+      const next = [updated, ...rest];
+      saveChats(next);
+      return next;
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages]);
 
   const appendLog = useCallback((line: string) => {
     setConsoleLines((c) => [...c.slice(-400), line]);
@@ -104,7 +171,7 @@ export default function StudioClient() {
 
   useEffect(() => {
     if (!sessionId) {
-      const s = id();
+      const s = uid();
       setSessionId(s);
     }
   }, [sessionId]);
@@ -135,13 +202,34 @@ export default function StudioClient() {
   }, []);
 
   const newChat = () => {
-    const s = id();
+    const s = uid();
     setSessionId(s);
     setMessages([]);
     setDraftAssistant(null);
     setInput("");
     setJarReady(false);
     appendLog("[codexmc] New chat session (workspace will re-initialize).");
+  };
+
+  const loadChat = (chat: SavedChat) => {
+    setSessionId(chat.sessionId);
+    setLoader(chat.loader);
+    setVersion(chat.version);
+    setMessages(chat.messages);
+    setDraftAssistant(null);
+    setInput("");
+    setJarReady(false);
+    appendLog(`[codexmc] Loaded chat: ${chat.title}`);
+  };
+
+  const deleteChat = (sid: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSavedChats((prev) => {
+      const next = prev.filter((c) => c.sessionId !== sid);
+      saveChats(next);
+      return next;
+    });
+    if (sid === sessionId) newChat();
   };
 
   const ingestBuildLine = useCallback((line: string) => {
@@ -227,7 +315,7 @@ export default function StudioClient() {
     const text = input.trim();
     if (!text || !sessionId || !version || busy) return;
     setInput("");
-    const userMsg: UiMsg = { id: id(), role: "user", content: text };
+    const userMsg: UiMsg = { id: uid(), role: "user", content: text };
     setMessages((m) => [...m, userMsg]);
     setBusy(true);
     setDraftAssistant("");
@@ -242,42 +330,23 @@ export default function StudioClient() {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sessionId,
-          loader,
-          version,
-          messages: core,
-        }),
+        body: JSON.stringify({ sessionId, loader, version, messages: core }),
       });
 
       if (!res.ok) {
         const errText = await res.text();
         let msg = errText;
-        try {
-          msg = JSON.parse(errText).error ?? errText;
-        } catch {
-          /* plain */
-        }
+        try { msg = JSON.parse(errText).error ?? errText; } catch { /* plain */ }
         appendLog(`[codexmc] Chat error: ${msg}`);
         setDraftAssistant(null);
-        setMessages((m) => [
-          ...m,
-          {
-            id: id(),
-            role: "assistant",
-            content: `**Error:** ${msg}`,
-          },
-        ]);
+        setMessages((m) => [...m, { id: uid(), role: "assistant", content: `**Error:** ${msg}` }]);
         return;
       }
 
       const reader = res.body?.getReader();
       const decoder = new TextDecoder();
       let full = "";
-      if (!reader) {
-        setDraftAssistant(null);
-        return;
-      }
+      if (!reader) { setDraftAssistant(null); return; }
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -285,7 +354,7 @@ export default function StudioClient() {
         setDraftAssistant(full);
       }
       setDraftAssistant(null);
-      setMessages((m) => [...m, { id: id(), role: "assistant", content: full }]);
+      setMessages((m) => [...m, { id: uid(), role: "assistant", content: full }]);
       appendLog("[codexmc] AI response finished (files applied if fenced blocks were present).");
     } catch (e) {
       appendLog(`[codexmc] Chat failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -297,6 +366,7 @@ export default function StudioClient() {
 
   return (
     <div className="flex h-[100dvh] flex-col bg-[var(--background)] md:flex-row">
+      {/* Sidebar */}
       <aside className="flex w-full flex-shrink-0 flex-col border-[var(--border)] bg-[var(--surface)] md:h-full md:w-64 md:border-r">
         <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
           <Link href="/" className="font-semibold tracking-tight">
@@ -313,7 +383,43 @@ export default function StudioClient() {
             + New chat
           </button>
         </div>
-        <div className="mt-auto border-t border-[var(--border)] p-3 text-xs leading-relaxed text-[var(--muted)]">
+
+        {/* Chat history */}
+        <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+          {savedChats.length === 0 && (
+            <p className="px-2 py-3 text-xs text-[var(--muted)]">No saved chats yet.</p>
+          )}
+          {savedChats.map((chat) => (
+            <div
+              key={chat.sessionId}
+              onClick={() => loadChat(chat)}
+              className={`group mb-1 flex cursor-pointer items-start justify-between gap-1 rounded-lg px-3 py-2 text-sm transition hover:bg-[var(--surface-hover)] ${
+                chat.sessionId === sessionId
+                  ? "border border-[var(--accent-dim)] bg-[var(--surface-hover)]"
+                  : ""
+              }`}
+            >
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-medium leading-tight text-[var(--foreground)]">
+                  {chat.title}
+                </p>
+                <p className="mt-0.5 text-xs text-[var(--muted)]">
+                  {chat.loader} · {timeAgo(chat.updatedAt)}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={(e) => deleteChat(chat.sessionId, e)}
+                className="mt-0.5 shrink-0 text-[var(--muted)] opacity-0 transition hover:text-red-400 group-hover:opacity-100"
+                title="Delete chat"
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+
+        <div className="border-t border-[var(--border)] p-3 text-xs leading-relaxed text-[var(--muted)]">
           {jdkHint && <p className="mb-2">{jdkHint}</p>}
           <p>
             CodexMC is Ollama-only. Set{" "}
@@ -372,11 +478,7 @@ export default function StudioClient() {
             type="button"
             onClick={() => void downloadJar()}
             disabled={!jarReady || !sessionId}
-            title={
-              jarReady
-                ? "Download the mod JAR from this session"
-                : "Run a successful build first"
-            }
+            title={jarReady ? "Download the mod JAR from this session" : "Run a successful build first"}
             className="rounded-lg border border-[var(--accent-dim)] bg-[var(--surface)] px-4 py-1.5 text-sm font-semibold text-[var(--accent)] disabled:opacity-40"
           >
             Download JAR
