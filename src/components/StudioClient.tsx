@@ -312,6 +312,11 @@ export default function StudioClient() {
       const final = [...nextMessages, assistantMsg];
       setMessages(final);
       appendLog("[codexmc] AI response finished (files applied if fenced blocks were present).");
+      // If the AI produced file blocks, automatically build and fix errors without extra clicks.
+      if (!buildBusy && /```codexmc:[^\n]+\n[\s\S]*?```/.test(full)) {
+        appendLog("[codexmc] —— Auto-building after code generation ——");
+        await runBuild(true, final);
+      }
       return final;
     } catch (e) {
       appendLog(`[codexmc] Chat failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -339,6 +344,7 @@ export default function StudioClient() {
     return sendToAi(prompt, currentMessages);
   }, [appendLog, sendToAi]);
 
+  // Build button runs a build only; auto-fix runs after code generation and after failed builds.
   const runBuild = useCallback(async (autoFix = false, currentMessages = messages) => {
     if (!sessionId) return;
     setBuildBusy(true);
@@ -535,7 +541,7 @@ export default function StudioClient() {
           </button>
           <button
             type="button"
-            onClick={() => void runBuild(true)}
+            onClick={() => void runBuild(false)}
             disabled={buildBusy || busy || !sessionId}
             className="rounded-lg bg-[var(--accent)] px-4 py-1.5 text-sm font-semibold text-[#06261a] disabled:opacity-50"
           >
