@@ -1,5 +1,5 @@
 import { createOpenAI } from "@ai-sdk/openai";
-import { createTextStreamResponse, streamText, type ModelMessage } from "ai";
+import { streamText, type ModelMessage } from "ai";
 import { extractCodexMcFiles } from "@/lib/parse-codexmc";
 import { applyGeneratedFiles } from "@/lib/workspace";
 
@@ -61,23 +61,27 @@ export async function* streamChatWithModelFallbacks(
 }
 
 export function buildLlmChatResponse(options: LlmChatStreamOptions): Response {
-  const textStream = new ReadableStream<string>({
+  const encoder = new TextEncoder();
+  const byteStream = new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
         for await (const chunk of streamChatWithModelFallbacks(options)) {
-          controller.enqueue(chunk);
+          controller.enqueue(encoder.encode(chunk));
         }
         controller.close();
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        controller.enqueue(`\n\n**Error:** ${msg}\n`);
+        controller.enqueue(encoder.encode(`\n\n**Error:** ${msg}\n`));
         controller.close();
       }
     },
   });
 
-  return createTextStreamResponse({
-    textStream,
-    headers: { "Cache-Control": "no-store" },
+  return new Response(byteStream, {
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-store",
+      "X-Accel-Buffering": "no",
+    },
   });
 }
