@@ -773,7 +773,7 @@ async function sendMessage() {
     const { response } = await fetchBackend('chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'qwen/qwen-2.5-coder-32b-instruct:free', messages: buildModelMessages(chat.messages), loader, version, max_tokens: 4096, temperature: 0.2 })
+      body: JSON.stringify({ model: 'deepseek/deepseek-coder:free', messages: buildModelMessages(chat.messages), loader, version, max_tokens: 4096, temperature: 0.2 })
     });
     if (!response.ok) {
       setTypingVisible(false);
