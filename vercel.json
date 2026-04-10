@@ -2,11 +2,12 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "fluid": true,
   "rewrites": [
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+    { "source": "/app", "destination": "/app.html" },
+    { "source": "/((?!api/|app\\.html|app-build\\.js).*)", "destination": "/index.html" }
   ],
   "headers": [
     {
-      "source": "/index.html",
+      "source": "/(index|app)\\.html",
       "headers": [{ "key": "Cache-Control", "value": "no-store, no-cache, must-revalidate" }]
     },
     {

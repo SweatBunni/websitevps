@@ -3,2961 +3,361 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CodexMC</title>
+<title>CodexMC — Minecraft Java AI Assistant</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=JetBrains+Mono:wght@300;400;500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&family=Syne:wght@700;800&display=swap" rel="stylesheet">
 <style>
 :root {
-  --bg:       #0c0c0d;
-  --bg1:      #111113;
-  --bg2:      #18181b;
-  --bg3:      #222226;
-  --bg4:      #2a2a30;
-  --border:   #2e2e36;
-  --border2:  #3e3e4a;
-  --text:     #e8e8f0;
-  --text2:    #9898b0;
-  --text3:    #5a5a70;
-  --amber:    #f59e0b;
-  --amber2:   #fbbf24;
-  --amber-dim:#7c4f00;
-  --amber-glow: rgba(245,158,11,0.12);
-  --green:    #34d399;
-  --red:      #f87171;
-  --font:     'JetBrains Mono', monospace;
-  --display:  'Bebas Neue', cursive;
-  --sidebar:  240px;
-  --radius:   6px;
-  --ease:     cubic-bezier(0.4,0,0.2,1);
-}
-
-*,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-html, body {
-  height: 100%;
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--font);
-  font-size: 13px;
-  overflow: hidden;
-}
-
-/* ── LAYOUT ── */
-#app { display: flex; height: 100vh; width: 100vw; position: relative; }
-
-#mobile-backdrop {
-  display: none;
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.55);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.2s var(--ease);
-  z-index: 40;
-}
-#mobile-backdrop.visible {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-/* ── SIDEBAR ── */
-#sidebar {
-  width: var(--sidebar);
-  min-width: var(--sidebar);
-  background: var(--bg1);
-  border-right: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  transition: width 0.22s var(--ease), min-width 0.22s var(--ease);
-  flex-shrink: 0;
-}
-#sidebar.collapsed { width: 0; min-width: 0; }
-
-.sidebar-head {
-  padding: 16px 14px 12px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  margin-bottom: 12px;
-}
-.brand-icon {
-  width: 28px; height: 28px;
-  background: var(--amber);
-  border-radius: 4px;
-  display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0;
-}
-.brand-icon svg { width: 16px; height: 16px; color: #000; }
-.brand-name {
-  font-family: var(--display);
-  font-size: 20px;
-  letter-spacing: 1px;
-  color: var(--text);
-  white-space: nowrap;
-}
-.brand-name em { color: var(--amber); font-style: normal; }
-
-#new-chat-btn {
-  width: 100%;
-  padding: 7px 10px;
-  background: var(--amber-glow);
-  border: 1px solid var(--amber-dim);
-  border-radius: var(--radius);
-  color: var(--amber2);
-  font-family: var(--font);
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.5px;
-  cursor: pointer;
-  display: flex; align-items: center; gap: 6px;
-  transition: background 0.15s, border-color 0.15s;
-  white-space: nowrap;
-}
-#new-chat-btn:hover { background: rgba(245,158,11,0.2); border-color: var(--amber); }
-
-/* selectors */
-.selector-row { display: flex; gap: 6px; padding: 10px 14px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
-.sel {
-  flex: 1;
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  color: var(--text);
-  font-family: var(--font);
-  font-size: 11px;
-  padding: 5px 7px;
-  appearance: none;
-  cursor: pointer;
-  min-width: 0;
-}
-.sel:focus { outline: none; border-color: var(--amber); }
-
-/* chat list */
-.chat-list-wrap {
-  flex: 1;
-  overflow-y: auto;
-  padding: 8px 8px;
-  scrollbar-width: thin;
-  scrollbar-color: var(--bg4) transparent;
-}
-.chat-group-label {
-  padding: 8px 6px 4px;
-  font-size: 9px;
-  letter-spacing: 1.5px;
-  text-transform: uppercase;
-  color: var(--text3);
-  font-weight: 700;
-}
-.chat-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  border-radius: var(--radius);
-  cursor: pointer;
-  transition: background 0.12s;
-  position: relative;
-  min-width: 0;
-  flex-wrap: wrap;
-}
-.chat-item:hover { background: var(--bg3); }
-.chat-item.active { background: var(--bg3); border-left: 2px solid var(--amber); padding-left: 6px; }
-.chat-item-icon { color: var(--text3); font-size: 12px; flex-shrink: 0; }
-.chat-item-title {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  color: var(--text2);
-}
-.chat-item.active .chat-item-title { color: var(--text); }
-.chat-item-badge {
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--amber);
-  background: rgba(245,158,11,0.12);
-  border: 1px solid rgba(245,158,11,0.25);
-  border-radius: 3px;
-  padding: 1px 4px;
-  flex-shrink: 0;
-  text-transform: uppercase;
-}
-.chat-item-del {
-  opacity: 0;
-  background: none;
-  border: none;
-  color: var(--text3);
-  cursor: pointer;
-  font-size: 11px;
-  padding: 2px 4px;
-  border-radius: 3px;
-  transition: opacity 0.1s, color 0.1s;
-  flex-shrink: 0;
-}
-.chat-item:hover .chat-item-del { opacity: 1; }
-.chat-item-del:hover { color: var(--red); }
-.topbar-share {
-  margin-left: auto;
-  background: none;
-  border: 1px solid var(--border);
-  color: var(--text3);
-  border-radius: var(--radius);
-  padding: 3px 9px;
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-  letter-spacing: 0.04em;
-  transition: color 0.15s, border-color 0.15s, background 0.15s;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  flex-shrink: 0;
-}
-.topbar-share:hover { color: var(--amber); border-color: var(--amber); background: rgba(245,158,11,0.08); }
-.topbar-share.copied { color: #4ade80; border-color: #4ade80; background: rgba(74,222,128,0.08); }
-
-/* sidebar footer */
-.sidebar-foot {
-  padding: 10px 14px;
-  border-top: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.sidebar-foot-label {
-  font-size: 9px;
-  letter-spacing: 1px;
-  color: var(--text3);
-  text-transform: uppercase;
-  margin-bottom: 5px;
-}
-
-/* ── MAIN ── */
-#main {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  min-width: 0;
-}
-
-/* topbar */
-#topbar {
-  height: 46px;
-  background: var(--bg1);
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 16px;
-  flex-shrink: 0;
-}
-#sidebar-toggle {
-  background: none;
-  border: none;
-  color: var(--text3);
-  cursor: pointer;
-  padding: 4px;
-  border-radius: 4px;
-  display: flex; align-items: center;
-  transition: color 0.12s;
-  flex-shrink: 0;
-}
-#sidebar-toggle:hover { color: var(--text); }
-#topbar-title {
-  flex: 1;
-  font-size: 12px;
-  color: var(--text2);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.topbar-badge {
-  font-size: 10px;
-  color: var(--amber);
-  background: var(--amber-glow);
-  border: 1px solid var(--amber-dim);
-  border-radius: 3px;
-  padding: 2px 6px;
-  letter-spacing: 0.5px;
-  font-weight: 700;
-}
-
-/* messages */
-#messages-wrap {
-  flex: 1;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--bg4) transparent;
-  padding: 0;
-}
-
-/* welcome */
-#welcome {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  gap: 32px;
-  padding: 40px 20px;
-}
-.welcome-logo {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
-}
-.welcome-logo-icon {
-  width: 56px; height: 56px;
-  background: var(--amber-glow);
-  border: 1px solid var(--amber-dim);
-  border-radius: 12px;
-  display: flex; align-items: center; justify-content: center;
-}
-.welcome-logo-icon svg { width: 30px; height: 30px; color: var(--amber); }
-.welcome-title {
-  font-family: var(--display);
-  font-size: 42px;
-  letter-spacing: 3px;
-  color: var(--text);
-}
-.welcome-title em { color: var(--amber); font-style: normal; }
-.welcome-sub {
-  font-size: 12px;
-  color: var(--text3);
-  letter-spacing: 0.5px;
-}
-.starters {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 8px;
-  max-width: 560px;
-  width: 100%;
-}
-.starter {
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 12px 14px;
-  cursor: pointer;
-  transition: border-color 0.15s, background 0.15s;
-  text-align: left;
-}
-.starter:hover { border-color: var(--border2); background: var(--bg3); }
-.starter-label {
-  font-size: 10px;
-  color: var(--amber);
-  letter-spacing: 1px;
-  text-transform: uppercase;
-  margin-bottom: 4px;
-  font-weight: 700;
-}
-.starter-text { font-size: 12px; color: var(--text2); line-height: 1.4; }
-
-/* messages list */
-#messages { padding: 0; }
-
-.msg {
-  display: flex;
-  gap: 0;
-  padding: 0;
-  border-bottom: 1px solid var(--border);
-  animation: fadeIn 0.18s ease;
-}
-@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
-.msg:last-child { border-bottom: none; }
-
-.msg-gutter {
-  width: 52px;
-  min-width: 52px;
-  padding: 16px 0 16px 16px;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-}
-.msg-avatar {
-  width: 26px; height: 26px;
-  border-radius: 4px;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 11px;
-  font-weight: 700;
-  flex-shrink: 0;
-}
-.msg-avatar.user { background: var(--bg4); color: var(--text2); }
-.msg-avatar.ai { background: var(--amber-glow); border: 1px solid var(--amber-dim); color: var(--amber); font-size: 14px; }
-
-.msg-body {
-  flex: 1;
-  padding: 14px 20px 14px 10px;
-  min-width: 0;
-}
-.msg-role {
-  font-size: 9px;
-  letter-spacing: 1.5px;
-  text-transform: uppercase;
-  font-weight: 700;
-  margin-bottom: 8px;
-}
-.msg-role.user { color: var(--text3); }
-.msg-role.ai { color: var(--amber); }
-.msg-content { line-height: 1.65; color: var(--text); font-size: 13px; }
-.msg-content p { margin-bottom: 10px; }
-.msg-content p:last-child { margin-bottom: 0; }
-.msg-content strong { color: var(--amber2); font-weight: 600; }
-.msg-content em { color: var(--text2); }
-.msg-content ul { padding-left: 18px; margin-bottom: 10px; }
-.msg-content li { margin-bottom: 4px; color: var(--text2); }
-.msg-content code {
-  background: var(--bg3);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  padding: 1px 5px;
-  font-family: var(--font);
-  font-size: 12px;
-  color: var(--amber2);
-}
-
-/* code blocks */
-.code-block {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  margin: 12px 0;
-  overflow: hidden;
-}
-.code-block-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 6px 12px;
-  background: var(--bg2);
-  border-bottom: 1px solid var(--border);
-}
-.code-lang {
-  font-size: 10px;
-  color: var(--amber);
-  letter-spacing: 1px;
-  text-transform: uppercase;
-  font-weight: 700;
-}
-.copy-btn {
-  background: none;
-  border: 1px solid var(--border2);
-  border-radius: 3px;
-  color: var(--text3);
-  font-family: var(--font);
-  font-size: 10px;
-  padding: 2px 8px;
-  cursor: pointer;
-  transition: color 0.12s, border-color 0.12s;
-}
-.copy-btn:hover { color: var(--text); border-color: var(--text3); }
-.copy-btn.copied { color: var(--green); border-color: var(--green); }
-.code-block pre {
-  padding: 14px;
-  overflow-x: auto;
-  margin: 0;
-}
-.code-block pre code {
-  font-family: var(--font);
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--text2);
-  background: none;
-  border: none;
-  padding: 0;
-}
-
-/* typing indicator */
-#typing {
-  display: none;
-  padding: 14px 20px 14px 62px;
-  border-bottom: 1px solid var(--border);
-}
-#typing.visible { display: flex; align-items: center; gap: 8px; }
-.typing-body {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-width: 0;
-  width: 100%;
-}
-.typing-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-.typing-label { font-size: 10px; color: var(--text3); letter-spacing: 1px; text-transform: uppercase; }
-.typing-dots { display: flex; gap: 4px; }
-.typing-dot {
-  width: 5px; height: 5px;
-  background: var(--amber);
-  border-radius: 50%;
-  animation: pulse 1.2s ease-in-out infinite;
-}
-.typing-dot:nth-child(2) { animation-delay: 0.2s; }
-.typing-dot:nth-child(3) { animation-delay: 0.4s; }
-@keyframes pulse { 0%,100% { opacity: 0.3; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1.1); } }
-.chat-activity-console {
-  background: rgba(0,0,0,0.16);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
-  width: min(100%, 560px);
-}
-.chat-activity-head {
-  padding: 7px 10px;
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text3);
-  border-bottom: 1px solid var(--border);
-  background: rgba(255,255,255,0.02);
-}
-.chat-activity-log {
-  max-height: 120px;
-  overflow-y: auto;
-  padding: 8px 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 11px;
-  color: var(--text2);
-  scrollbar-width: thin;
-}
-.chat-activity-line {
-  line-height: 1.45;
-  word-break: break-word;
-}
-.chat-activity-line strong {
-  color: var(--amber2);
-  margin-right: 6px;
-}
-
-/* build prompt */
-.build-prompt {
-  margin-top: 14px;
-  background: var(--bg2);
-  border: 1px solid var(--border2);
-  border-radius: var(--radius);
-  padding: 14px;
-}
-.build-prompt-title { font-size: 12px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
-.build-prompt-sub { font-size: 11px; color: var(--text2); margin-bottom: 10px; }
-.build-name-input {
-  width: 100%;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  color: var(--text);
-  font-family: var(--font);
-  font-size: 12px;
-  padding: 7px 10px;
-  margin-bottom: 6px;
-  transition: border-color 0.15s;
-}
-.build-name-input:focus { outline: none; border-color: var(--amber); }
-.build-name-note { font-size: 10px; color: var(--red); margin-bottom: 8px; min-height: 14px; }
-.build-prompt-btns { display: flex; gap: 6px; flex-wrap: wrap; }
-.build-btn {
-  padding: 6px 14px;
-  border-radius: 4px;
-  font-family: var(--font);
-  font-size: 11px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.15s;
-  letter-spacing: 0.3px;
-  border: 1px solid transparent;
-}
-.build-btn-primary { background: var(--amber); color: #000; border-color: var(--amber); }
-.build-btn-primary:hover { background: var(--amber2); }
-.build-btn-secondary { background: var(--bg3); color: var(--text2); border-color: var(--border2); }
-.build-btn-secondary:hover { border-color: var(--text3); color: var(--text); }
-.build-btn-ghost { background: none; color: var(--text3); border-color: transparent; }
-.build-btn-ghost:hover { color: var(--red); }
-
-/* build progress */
-.build-progress {
-  margin-top: 14px;
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 14px;
-}
-.build-progress-title { font-size: 11px; color: var(--text2); margin-bottom: 10px; }
-.build-progress-title strong { color: var(--text); }
-.build-source-note { font-size: 10px; color: var(--amber); margin: -2px 0 10px; }
-.build-log { display: flex; flex-direction: column; gap: 5px; }
-.build-log-line {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  font-size: 11px;
-  line-height: 1.4;
-}
-.build-log-line.done .step-icon::before { content: '✓'; color: var(--green); }
-.build-log-line.running .step-icon::before { content: '◌'; color: var(--amber); animation: spin 1.2s linear infinite; }
-.build-log-line.error .step-icon::before { content: '✗'; color: var(--red); }
-.step-icon { width: 14px; flex-shrink: 0; margin-top: 1px; }
-@keyframes spin { to { transform: rotate(360deg); display: inline-block; } }
-.build-log-line.done span:last-child { color: var(--text2); }
-.build-log-line.running span:last-child { color: var(--amber2); }
-.build-log-line.error span:last-child { color: var(--red); }
-.build-activity-console {
-  margin-top: 12px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
-}
-.build-activity-head {
-  padding: 7px 10px;
-  background: var(--bg2);
-  border-bottom: 1px solid var(--border);
-  font-size: 10px;
-  color: var(--amber);
-  letter-spacing: 1px;
-  text-transform: uppercase;
-  font-weight: 700;
-}
-.build-activity-log {
-  max-height: 180px;
-  overflow-y: auto;
-  padding: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 11px;
-}
-.build-activity-line {
-  color: var(--text2);
-  line-height: 1.45;
-}
-.build-activity-line strong {
-  color: var(--amber2);
-  font-weight: 600;
-}
-
-.build-download-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 14px;
-  background: var(--amber);
-  color: #000;
-  border: none;
-  border-radius: 4px;
-  font-family: var(--font);
-  font-size: 11px;
-  font-weight: 700;
-  text-decoration: none;
-  cursor: pointer;
-  transition: background 0.15s;
-  letter-spacing: 0.3px;
-}
-.build-download-btn:hover { background: var(--amber2); }
-.build-download-btn.secondary { background: var(--bg3); color: var(--text2); border: 1px solid var(--border2); }
-.build-download-btn.secondary:hover { border-color: var(--text3); color: var(--text); }
-
-/* ── INPUT AREA ── */
-#input-area {
-  background: var(--bg1);
-  border-top: 1px solid var(--border);
-  padding: 12px 16px 14px;
-  flex-shrink: 0;
-}
-.input-row {
-  display: flex;
-  gap: 8px;
-  align-items: flex-end;
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px 10px;
-  transition: border-color 0.15s;
-}
-.input-row:focus-within { border-color: var(--amber-dim); }
-#input-box {
-  flex: 1;
-  background: none;
-  border: none;
-  color: var(--text);
-  font-family: var(--font);
-  font-size: 13px;
-  line-height: 1.5;
-  resize: none;
-  min-height: 24px;
-  max-height: 180px;
-  overflow-y: auto;
-  scrollbar-width: thin;
-}
-#input-box::placeholder { color: var(--text3); }
-#input-box:focus { outline: none; }
-#send-btn {
-  width: 34px; height: 34px;
-  background: var(--amber);
-  border: none;
-  border-radius: 6px;
-  color: #000;
-  cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  transition: background 0.15s, opacity 0.15s;
-  flex-shrink: 0;
-}
-#send-btn:hover { background: var(--amber2); }
-#send-btn:disabled { opacity: 0.35; cursor: default; }
-.input-footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: 6px;
-  padding: 0 2px;
-}
-.input-hint { font-size: 10px; color: var(--text3); }
-
-/* ── SCROLLBAR ── */
-::-webkit-scrollbar { width: 4px; height: 4px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--bg4); border-radius: 2px; }
-
-/* misc */
-.hidden { display: none !important; }
-details summary { cursor: pointer; font-size: 11px; color: var(--text2); }
-details pre {
-  margin-top: 8px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 10px;
-  font-size: 11px;
-  white-space: pre-wrap;
-  max-height: 240px;
-  overflow: auto;
-  color: var(--text3);
-}
-
-/* mobile */
-@media (max-width: 640px) {
-  html, body {
-    height: auto;
-    min-height: 100%;
-    overflow-y: auto;
-    overflow-x: hidden;
-  }
-  #app { width: 100%; }
-  #main {
-    width: 100%;
-    min-width: 0;
-    min-height: 100dvh;
-  }
-  #messages-wrap { overflow-y: auto; -webkit-overflow-scrolling: touch; }
-  #sidebar {
-    position: fixed;
-    top: 0;
-    left: 0;
-    z-index: 50;
-    height: 100dvh;
-    width: min(86vw, 320px);
-    min-width: min(86vw, 320px);
-    max-width: min(86vw, 320px);
-    transform: translateX(0);
-    transition: transform 0.22s var(--ease);
-    box-shadow: 18px 0 36px rgba(0,0,0,0.4);
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-  #sidebar.collapsed {
-    width: min(86vw, 320px);
-    min-width: min(86vw, 320px);
-    transform: translateX(-100%);
-  }
-  #mobile-backdrop { display: block; }
-  .starters { grid-template-columns: 1fr; }
+  --bg: #080b0f;
+  --bg1: #0d1117;
+  --bg2: #131920;
+  --bg3: #1a2230;
+  --border: #1f2d3d;
+  --border2: #2a3d52;
+  --text: #e2eaf4;
+  --text2: #7a90a8;
+  --text3: #3d5168;
+  --green: #00ff88;
+  --green2: #00cc6a;
+  --green-dim: #003d20;
+  --green-glow: rgba(0,255,136,0.08);
+  --cyan: #00d4ff;
+  --font: 'Space Grotesk', sans-serif;
+  --mono: 'Space Mono', monospace;
+  --display: 'Syne', sans-serif;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body { background: var(--bg); color: var(--text); font-family: var(--font); overflow-x: hidden; }
+nav {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+  padding: 16px 48px; display: flex; align-items: center; justify-content: space-between;
+  background: rgba(8,11,15,0.9); backdrop-filter: blur(20px);
+  border-bottom: 1px solid rgba(31,45,61,0.6);
+}
+.nav-brand { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+.nav-logo { width: 32px; height: 32px; background: var(--green-glow); border: 1px solid var(--green-dim); border-radius: 6px; display: flex; align-items: center; justify-content: center; }
+.nav-logo svg { width: 18px; height: 18px; color: var(--green); }
+.nav-wordmark { font-family: var(--display); font-size: 22px; font-weight: 800; color: var(--text); letter-spacing: -0.5px; }
+.nav-wordmark em { color: var(--green); font-style: normal; }
+.nav-links { display: flex; align-items: center; gap: 28px; list-style: none; }
+.nav-links a { color: var(--text2); text-decoration: none; font-size: 14px; font-weight: 500; transition: color 0.15s; }
+.nav-links a:hover { color: var(--text); }
+.nav-cta { background: var(--green) !important; color: #000 !important; padding: 8px 20px; border-radius: 6px; font-weight: 600 !important; }
+.nav-cta:hover { background: var(--green2) !important; }
+.hero {
+  position: relative; min-height: 100vh; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; padding: 120px 24px 80px; text-align: center; overflow: hidden;
+}
+.hero-grid {
+  position: absolute; inset: 0;
+  background-image: linear-gradient(rgba(0,255,136,0.025) 1px, transparent 1px), linear-gradient(90deg, rgba(0,255,136,0.025) 1px, transparent 1px);
+  background-size: 60px 60px;
+  mask-image: radial-gradient(ellipse 80% 70% at 50% 40%, black 20%, transparent 100%);
+}
+.hero-glow { position: absolute; top: 15%; left: 50%; transform: translateX(-50%); width: 700px; height: 500px; background: radial-gradient(ellipse, rgba(0,255,136,0.06) 0%, transparent 70%); pointer-events: none; }
+.hero-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--green-glow); border: 1px solid var(--green-dim); border-radius: 100px;
+  padding: 6px 14px; font-family: var(--mono); font-size: 11px; color: var(--green);
+  letter-spacing: 1px; text-transform: uppercase; margin-bottom: 36px;
+  animation: fadeUp 0.6s ease both;
+}
+.badge-dot { width: 6px; height: 6px; background: var(--green); border-radius: 50%; animation: pulse 2s ease-in-out infinite; }
+@keyframes pulse { 0%,100% { opacity: 0.4; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1.2); } }
+.hero-title {
+  font-family: var(--display); font-size: clamp(56px, 9vw, 108px); font-weight: 800;
+  line-height: 0.9; letter-spacing: -4px; color: var(--text); margin-bottom: 28px;
+  animation: fadeUp 0.6s 0.1s ease both;
+}
+.hero-title .green { color: var(--green); }
+.hero-title .dim { color: var(--text3); }
+.hero-sub {
+  font-size: clamp(16px, 2vw, 19px); color: var(--text2); max-width: 520px; line-height: 1.65;
+  margin-bottom: 48px; animation: fadeUp 0.6s 0.2s ease both;
+}
+.hero-actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-bottom: 80px; animation: fadeUp 0.6s 0.3s ease both; }
+.btn-primary {
+  display: inline-flex; align-items: center; gap: 8px; background: var(--green); color: #000;
+  padding: 14px 28px; border-radius: 8px; font-family: var(--font); font-size: 15px; font-weight: 700;
+  text-decoration: none; transition: all 0.15s; box-shadow: 0 0 30px rgba(0,255,136,0.18);
+}
+.btn-primary:hover { background: var(--green2); transform: translateY(-2px); box-shadow: 0 6px 40px rgba(0,255,136,0.28); }
+.btn-secondary {
+  display: inline-flex; align-items: center; gap: 8px; background: transparent; color: var(--text2);
+  padding: 13px 28px; border-radius: 8px; border: 1px solid var(--border2); font-family: var(--font);
+  font-size: 15px; font-weight: 500; text-decoration: none; transition: all 0.15s;
+}
+.btn-secondary:hover { border-color: var(--text3); color: var(--text); }
+@keyframes fadeUp { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }
+.mockup-wrap { width: 100%; max-width: 920px; animation: fadeUp 0.8s 0.4s ease both; }
+.mockup {
+  background: var(--bg1); border: 1px solid var(--border); border-radius: 14px; overflow: hidden;
+  box-shadow: 0 0 0 1px rgba(0,255,136,0.05), 0 40px 80px rgba(0,0,0,0.7);
+}
+.mockup-bar { padding: 11px 16px; background: var(--bg2); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 7px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; }
+.dot.r { background: #ff5f57; }
+.dot.y { background: #febc2e; }
+.dot.g { background: #28c840; }
+.bar-title { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--text3); }
+.mockup-layout { display: grid; grid-template-columns: 210px 1fr; height: 400px; }
+.m-sidebar { background: var(--bg1); border-right: 1px solid var(--border); padding: 10px 8px; }
+.m-item { padding: 7px 9px; border-radius: 5px; margin-bottom: 3px; }
+.m-item.a { background: var(--bg3); border-left: 2px solid var(--green); padding-left: 7px; }
+.m-item-text { font-size: 11px; color: var(--text3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-item.a .m-item-text { color: var(--text); }
+.m-badge { display:inline-block; margin-top:2px; font-family:var(--mono); font-size:9px; color:var(--green); background:var(--green-glow); border:1px solid var(--green-dim); border-radius:3px; padding:1px 4px; }
+.m-main { display: flex; flex-direction: column; background: var(--bg); }
+.m-msgs { flex: 1; padding: 18px; display: flex; flex-direction: column; gap: 14px; overflow: hidden; }
+.m-msg { display: flex; gap: 9px; }
+.m-av { width: 23px; height: 23px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; flex-shrink: 0; }
+.m-av.u { background: var(--bg3); color: var(--text3); }
+.m-av.ai { background: var(--green-glow); border: 1px solid var(--green-dim); color: var(--green); font-size: 11px; }
+.m-text { font-size: 11.5px; line-height: 1.5; color: var(--text2); }
+.m-code { background: var(--bg2); border: 1px solid var(--border); border-radius: 5px; padding: 9px 11px; font-family: var(--mono); font-size: 10px; color: var(--text2); line-height: 1.5; margin-top: 7px; }
+.kw { color: #c792ea; }
+.cl { color: #82aaff; }
+.st { color: #c3e88d; }
+.cm { color: var(--text3); }
+.m-input-row { padding: 10px 14px; border-top: 1px solid var(--border); display: flex; gap: 7px; align-items: center; background: var(--bg1); }
+.m-input-box { flex: 1; background: var(--bg2); border: 1px solid var(--border); border-radius: 5px; height: 32px; font-size: 11px; color: var(--text3); }
+.m-send { width: 32px; height: 32px; background: var(--green); border-radius: 5px; display: flex; align-items: center; justify-content: center; }
+.m-send svg { width: 13px; height: 13px; color: #000; }
+.sec { padding: 100px 24px; max-width: 1100px; margin: 0 auto; }
+.sec-label { font-family: var(--mono); font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--green); margin-bottom: 12px; }
+.sec-title { font-family: var(--display); font-size: clamp(30px, 4vw, 52px); font-weight: 800; letter-spacing: -1.5px; line-height: 1; color: var(--text); margin-bottom: 18px; }
+.sec-desc { font-size: 16px; color: var(--text2); max-width: 520px; line-height: 1.65; }
+.feat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; margin-top: 56px; }
+.feat { background: var(--bg1); padding: 30px; transition: background 0.2s; }
+.feat:hover { background: var(--bg2); }
+.feat-icon { width: 38px; height: 38px; background: var(--green-glow); border: 1px solid var(--green-dim); border-radius: 7px; display: flex; align-items: center; justify-content: center; margin-bottom: 14px; }
+.feat-icon svg { width: 18px; height: 18px; color: var(--green); }
+.feat-title { font-family: var(--display); font-size: 17px; font-weight: 700; color: var(--text); margin-bottom: 7px; }
+.feat-desc { font-size: 13.5px; color: var(--text2); line-height: 1.6; }
+.loaders-sec { padding: 80px 24px; background: var(--bg1); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.loaders-inner { max-width: 1100px; margin: 0 auto; display: grid; grid-template-columns: 1fr 1fr; gap: 80px; align-items: center; }
+.loaders-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+.lcard { background: var(--bg); border: 1px solid var(--border); border-radius: 9px; padding: 18px; transition: border-color 0.15s; }
+.lcard:hover { border-color: var(--border2); }
+.lname { font-family: var(--display); font-size: 19px; font-weight: 800; letter-spacing: -0.5px; margin-bottom: 4px; }
+.lname.fa { color: #f0c040; }
+.lname.fo { color: #ff8c42; }
+.lname.ne { color: #a78bfa; }
+.lname.sp { color: var(--cyan); }
+.lname.pa { color: #f87171; }
+.ldesc { font-size: 12px; color: var(--text3); line-height: 1.5; }
+.steps { display: flex; flex-direction: column; gap: 0; margin-top: 56px; }
+.step { display: flex; gap: 22px; align-items: flex-start; position: relative; padding-bottom: 44px; }
+.step:last-child { padding-bottom: 0; }
+.step:not(:last-child)::after { content: ''; position: absolute; left: 18px; top: 44px; bottom: 0; width: 1px; background: var(--border); }
+.step-n { width: 38px; height: 38px; border-radius: 50%; background: var(--bg2); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--green); flex-shrink: 0; position: relative; z-index: 1; }
+.step-title { font-family: var(--display); font-size: 19px; font-weight: 700; color: var(--text); margin-bottom: 5px; margin-top: 6px; }
+.step-desc { font-size: 13.5px; color: var(--text2); line-height: 1.6; max-width: 460px; }
+.cta-sec { padding: 120px 24px; text-align: center; position: relative; overflow: hidden; }
+.cta-glow { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); width: 600px; height: 350px; background: radial-gradient(ellipse, rgba(0,255,136,0.055) 0%, transparent 70%); pointer-events: none; }
+footer { padding: 28px 48px; border-top: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+.footer-brand { font-family: var(--display); font-size: 15px; font-weight: 800; color: var(--text3); }
+.footer-brand em { color: var(--green); font-style: normal; }
+.footer-note { font-size: 12px; color: var(--text3); }
+@media (max-width: 768px) {
+  nav { padding: 14px 20px; }
+  .nav-links { display: none; }
+  .feat-grid { grid-template-columns: 1fr; }
+  .loaders-inner { grid-template-columns: 1fr; gap: 40px; }
+  .mockup-layout { grid-template-columns: 1fr; }
+  .m-sidebar { display: none; }
+  footer { flex-direction: column; gap: 8px; text-align: center; }
 }
 </style>
 </head>
 <body>
-<div id="app">
 
-  <!-- SIDEBAR -->
-  <div id="sidebar">
-    <div class="sidebar-head">
-      <div class="brand">
-        <div class="brand-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="12,2 22,8.5 22,15.5 12,22 2,15.5 2,8.5"/><line x1="12" y1="2" x2="12" y2="22"/><line x1="2" y1="8.5" x2="22" y2="8.5"/><line x1="2" y1="15.5" x2="22" y2="15.5"/></svg>
-        </div>
-        <span class="brand-name">Codex<em>MC</em></span>
+<nav>
+  <a href="/" class="nav-brand">
+    <div class="nav-logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="12,2 22,8.5 22,15.5 12,22 2,15.5 2,8.5"/><line x1="12" y1="2" x2="12" y2="22"/><line x1="2" y1="8.5" x2="22" y2="8.5"/><line x1="2" y1="15.5" x2="22" y2="15.5"/></svg>
+    </div>
+    <span class="nav-wordmark">Codex<em>MC</em></span>
+  </a>
+  <ul class="nav-links">
+    <li><a href="#features">Features</a></li>
+    <li><a href="#loaders">Loaders</a></li>
+    <li><a href="#how-it-works">How it works</a></li>
+    <li><a href="/app" class="nav-cta">Launch App →</a></li>
+  </ul>
+</nav>
+
+<section class="hero">
+  <div class="hero-grid"></div>
+  <div class="hero-glow"></div>
+  <div class="hero-badge"><div class="badge-dot"></div>Qwen 2.5 Coder 32B · Free</div>
+  <h1 class="hero-title">
+    Build<br><span class="green">Minecraft</span><br><span class="dim">mods faster</span>
+  </h1>
+  <p class="hero-sub">AI-powered Java modding assistant. Generates complete, compilable code for Fabric, Forge, NeoForge, Spigot, and Paper with live version research.</p>
+  <div class="hero-actions">
+    <a href="/app" class="btn-primary">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="12,2 22,8.5 22,15.5 12,22 2,15.5 2,8.5"/></svg>
+      Start Coding
+    </a>
+    <a href="#features" class="btn-secondary">See Features <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6,9 12,15 18,9"/></svg></a>
+  </div>
+  <div class="mockup-wrap">
+    <div class="mockup">
+      <div class="mockup-bar">
+        <div class="dot r"></div><div class="dot y"></div><div class="dot g"></div>
+        <span class="bar-title">CodexMC · Fabric 1.21.1</span>
       </div>
-      <button id="new-chat-btn" onclick="newChat()">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        NEW CHAT
-      </button>
-    </div>
+      <div class="mockup-layout">
+        <div class="m-sidebar">
+          <div class="m-item a"><div class="m-item-text">Custom ore generation mod</div><span class="m-badge">FABRIC 1.21.1</span></div>
+          <div class="m-item"><div class="m-item-text">Spigot player data plugin</div></div>
+          <div class="m-item"><div class="m-item-text">NeoForge energy machine</div></div>
+        </div>
+        <div class="m-main">
+          <div class="m-msgs">
+            <div class="m-msg">
+              <div class="m-av u">U</div>
+              <div class="m-text">Create a Fabric mod that adds a custom ore spawning at Y=-60 with configurable rates</div>
+            </div>
+            <div class="m-msg">
+              <div class="m-av ai">⛏</div>
+              <div class="m-text">
+                I'll create a complete Fabric 1.21.1 mod. Here's the main class:
+                <div class="m-code">
+<span class="cm">// File: src/main/java/com/example/deepore/DeepOreMod.java</span>
+<span class="kw">public class</span> <span class="cl">DeepOreMod</span> <span class="kw">implements</span> <span class="cl">ModInitializer</span> {
+  <span class="kw">public static final</span> String MOD_ID = <span class="st">"deepore"</span>;
 
-    <div class="selector-row">
-      <select id="loader-sel" class="sel" onchange="onLoaderChange()">
-        <option value="fabric">Fabric</option>
-        <option value="forge">Forge</option>
-        <option value="neoforge">NeoForge</option>
-        <option value="spigot">Spigot</option>
-        <option value="paper">Paper</option>
-      </select>
-      <select id="version-sel" class="sel"></select>
-    </div>
-
-    <div class="chat-list-wrap" id="chat-list"></div>
-
-    <div class="sidebar-foot">
-      <div class="sidebar-foot-label">Minecraft Java AI</div>
+  <span class="kw">@Override public void</span> onInitialize() {
+    DeepOreBlocks.register();
+    DeepOreGeneration.register();
+  }
+}</div>
+              </div>
+            </div>
+          </div>
+          <div class="m-input-row">
+            <div class="m-input-box"></div>
+            <div class="m-send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5,12 12,5 19,12"/></svg></div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
+</section>
 
-  <div id="mobile-backdrop" onclick="closeSidebar()"></div>
-
-  <!-- MAIN -->
-  <div id="main">
-    <div id="topbar">
-      <button id="sidebar-toggle" onclick="toggleSidebar()">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
-      </button>
-      <span id="topbar-title">New Chat</span>
-      <span class="topbar-badge">QWEN</span>
-      <button class="topbar-share" id="share-btn" onclick="copyShareLink()" title="Copy link to this chat">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
-        SHARE
-      </button>
+<section class="sec" id="features">
+  <div class="sec-label">Capabilities</div>
+  <h2 class="sec-title">Everything you need<br>to mod Minecraft</h2>
+  <p class="sec-desc">CodexMC understands the full Minecraft Java modding ecosystem — from event systems to build configs.</p>
+  <div class="feat-grid">
+    <div class="feat">
+      <div class="feat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></div>
+      <div class="feat-title">Complete Java Code</div>
+      <div class="feat-desc">Fully runnable Java with all imports, package declarations, and class structure — ready to compile with zero edits needed.</div>
     </div>
-
-    <div id="messages-wrap">
-      <div id="welcome">
-        <div class="welcome-logo">
-          <div class="welcome-logo-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12,2 22,8.5 22,15.5 12,22 2,15.5 2,8.5"/><line x1="12" y1="2" x2="12" y2="22"/><line x1="2" y1="8.5" x2="22" y2="8.5"/><line x1="2" y1="15.5" x2="22" y2="15.5"/></svg>
-          </div>
-          <div class="welcome-title">CODEX<em>MC</em></div>
-          <div class="welcome-sub">Minecraft Java Edition AI Assistant</div>
-        </div>
-        <div class="starters">
-          <div class="starter" onclick="sendStarter(this)">
-            <div class="starter-label">Fabric</div>
-            <div class="starter-text">Create a custom ore generation mod with configurable spawn rates</div>
-          </div>
-          <div class="starter" onclick="sendStarter(this)">
-            <div class="starter-label">Spigot</div>
-            <div class="starter-text">Build a plugin with custom commands and player data persistence</div>
-          </div>
-          <div class="starter" onclick="sendStarter(this)">
-            <div class="starter-label">Forge</div>
-            <div class="starter-text">Add a new crafting machine block with energy consumption</div>
-          </div>
-          <div class="starter" onclick="sendStarter(this)">
-            <div class="starter-label">NeoForge</div>
-            <div class="starter-text">Create a dimension with custom biomes and structures</div>
-          </div>
-        </div>
-      </div>
-      <div id="messages">
-        <div id="typing" class="hidden">
-          <div class="msg-gutter"><div class="msg-avatar ai">⛏</div></div>
-          <div class="typing-body">
-            <div class="typing-head">
-            <span class="typing-label">Generating</span>
-            <div class="typing-dots">
-              <div class="typing-dot"></div>
-              <div class="typing-dot"></div>
-              <div class="typing-dot"></div>
-            </div>
-            </div>
-            <div class="chat-activity-console">
-              <div class="chat-activity-head">Live Chat Activity</div>
-              <div id="chat-activity-log" class="chat-activity-log"></div>
-            </div>
-          </div>
-        </div>
-      </div>
+    <div class="feat">
+      <div class="feat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg></div>
+      <div class="feat-title">Full Gradle Projects</div>
+      <div class="feat-desc">Outputs build.gradle, gradle.properties, settings.gradle with correct loader configs, Yarn mappings, and API versions.</div>
     </div>
+    <div class="feat">
+      <div class="feat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></div>
+      <div class="feat-title">Live Version Research</div>
+      <div class="feat-desc">Fetches current Yarn mappings, Fabric API, and ForgeGradle versions from official sources before generating code.</div>
+    </div>
+    <div class="feat">
+      <div class="feat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
+      <div class="feat-title">Resource Files Included</div>
+      <div class="feat-desc">Model JSON, texture references, fabric.mod.json or mods.toml — every resource file your mod needs is generated automatically.</div>
+    </div>
+    <div class="feat">
+      <div class="feat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg></div>
+      <div class="feat-title">One-Click JAR Build</div>
+      <div class="feat-desc">Hit "Build Mod" and CodexMC compiles using real Gradle on the server. AI auto-fixes errors. Download the working JAR.</div>
+    </div>
+    <div class="feat">
+      <div class="feat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div>
+      <div class="feat-title">Streaming + Activity Log</div>
+      <div class="feat-desc">Real-time streaming responses with a live console showing each step — from research to code generation to build completion.</div>
+    </div>
+  </div>
+</section>
 
-    <div id="input-area">
-      <div class="input-row">
-        <textarea id="input-box" rows="1" placeholder="Ask about Minecraft modding..." onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
-        <button id="send-btn" onclick="sendMessage()">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5,12 12,5 19,12"/></svg>
-        </button>
-      </div>
-      <div class="input-footer">
-        <span class="input-hint">Enter to send · Shift+Enter for newline</span>
-      </div>
+<div class="loaders-sec" id="loaders">
+  <div class="loaders-inner">
+    <div>
+      <div class="sec-label">Supported Platforms</div>
+      <h2 class="sec-title">Your stack,<br>covered</h2>
+      <p class="sec-desc" style="margin-bottom:0">Every major Minecraft Java mod platform, with correct mappings, APIs, and dependencies for each one.</p>
+    </div>
+    <div class="loaders-grid">
+      <div class="lcard"><div class="lname fa">Fabric</div><div class="ldesc">Yarn mappings, Loom, and Fabric API. Correct per-version Identifier usage and modern block settings.</div></div>
+      <div class="lcard"><div class="lname fo">Forge</div><div class="ldesc">Official mappings, ForgeGradle, FML lifecycle. Complete mods.toml and @Mod annotations.</div></div>
+      <div class="lcard"><div class="lname ne">NeoForge</div><div class="ldesc">Modern Forge fork with userdev plugin and NeoForge-specific event bus APIs.</div></div>
+      <div class="lcard"><div class="lname sp">Spigot</div><div class="ldesc">Bukkit event system, commands, and persistent data with full plugin.yml output.</div></div>
+      <div class="lcard" style="grid-column:span 2"><div class="lname pa">Paper</div><div class="ldesc">Paper API extensions — async chunks, scheduler improvements, Folia support, and Adventure text.</div></div>
     </div>
   </div>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js">
-function getSelectedSetup() {
-  return {
-    loader: document.getElementById("loader-sel")?.value,
-    mcVersion: document.getElementById("version-sel")?.value
-  };
-}
-
-</script>
-  <script src="https://js.puter.com/v2/"></script>
-  <script src="/app-build.js"></script>
-<script>
-const DEFAULT_SYSTEM = `You are CodexMC, an expert Minecraft Java Edition coding assistant.
-You specialize in:
-- Spigot / Paper / Bukkit plugin development
-- Fabric and Forge mod development
-- NMS (net.minecraft.server) and ProtocolLib usage
-- Datapacks and custom world generation
-- Minecraft's internal Java APIs and event systems
-- Performance optimization for Minecraft servers
-- Gradle/Maven build systems for Minecraft projects
-
-Always provide complete, runnable Java code when possible.
-Format code using proper Java conventions.
-Include import statements. Explain your code clearly.
-Always respect the selected loader and Minecraft version.
-Only use imports, mappings, classes, and methods that actually exist for that target.
-Follow the selected target's mappings mode and loader conventions exactly.
-For Fabric targets, use Yarn mappings and Yarn-style Minecraft imports by default unless the selected target is a non-obfuscated Fabric 26.x environment.
-For modern Fabric/Yarn targets such as 1.21.x, do not use new Identifier(...); use Identifier.of(namespace, path) or Identifier.of(fullId) instead.
-For modern Yarn-based Fabric targets, prefer \`Item.Settings\` and \`AbstractBlock.Settings.copy(...)\` over outdated helper classes like \`FabricItemSettings\` or \`FabricBlockSettings\`.
-For modern Fabric blocks and block items, set \`registryKey(...)\` on \`AbstractBlock.Settings\` and \`Item.Settings\` before constructing the instances.
-For Fabric 26.1 or newer, treat the environment as non-obfuscated and avoid old Yarn-era tutorial imports unless you are certain they still exist.
-For Fabric 26.x specifically, NEVER assume Yarn packages like \`net.minecraft.block.*\`, \`net.minecraft.registry.*\`, or \`net.minecraft.util.Identifier\` exist. If uncertain, generate a smaller valid scaffold instead of guessing imports.
-If a requested advanced API surface such as biome, worldgen, or feature code is uncertain for the selected target, prefer a smaller safe scaffold instead of inventing imports.
-When relevant, mention the Minecraft version your code targets.
-For full mod generation, prefer multiple Java source files instead of one giant class.
-Return one fenced java code block per Java file.
-Start each Java code block with a comment like // File: src/main/java/com/example/mod/ExampleClass.java.
-For full buildable project generation, do NOT rely on hidden templates. You must output the actual project files yourself.
-When generating a full mod or plugin, include complete file blocks for build.gradle, settings.gradle, gradle.properties, loader metadata files, and all required Java/resource files.
-Start every generated file block with a first line comment like // File: relative/path.ext, even for Gradle, JSON, TOML, and other non-Java files.
-
-You ALWAYS include complete model JSON files for any item or block you create, and reference texture paths properly in code.`
-
-function readStoredJson(key, fallback) {
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return fallback;
-    const parsed = JSON.parse(raw);
-    return parsed == null ? fallback : parsed;
-  } catch {
-    try { localStorage.removeItem(key); } catch {}
-    return fallback;
-  }
-}
-
-function readStoredText(key, fallback = '') {
-  try {
-    const value = localStorage.getItem(key);
-    return typeof value === 'string' && value ? value : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function writeStoredValue(key, value) {
-  try {
-    localStorage.setItem(key, value);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function normalizeStoredChats(value) {
-  if (!Array.isArray(value)) return [];
-  return value.map(chat => {
-    if (!chat || typeof chat !== 'object') return null;
-    const messages = Array.isArray(chat.messages)
-      ? chat.messages.filter(msg =>
-          msg &&
-          typeof msg === 'object' &&
-          typeof msg.role === 'string' &&
-          typeof msg.content === 'string')
-      : [];
-    return {
-      id: typeof chat.id === 'string' && chat.id ? chat.id : `chat_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,
-      title: typeof chat.title === 'string' && chat.title.trim() ? chat.title : 'New Chat',
-      created: Number.isFinite(Number(chat.created)) ? Number(chat.created) : Date.now(),
-      messages: messages.length ? messages : [{ role: 'system', content: DEFAULT_SYSTEM }],
-      loader: typeof chat.loader === 'string' && chat.loader ? chat.loader : null,
-      version: typeof chat.version === 'string' && chat.version ? chat.version : null,
-      activityLog: Array.isArray(chat.activityLog)
-        ? chat.activityLog
-            .filter(entry => entry && typeof entry === 'object')
-            .map(entry => ({
-              time: typeof entry.time === 'string' && entry.time ? entry.time : new Date().toISOString(),
-              message: typeof entry.message === 'string' ? entry.message : '',
-            }))
-            .filter(entry => entry.message)
-            .slice(-12)
-        : [],
-    };
-  }).filter(Boolean);
-}
-
-const storedChats = normalizeStoredChats(readStoredJson('mci_chats', []));
-let state = {
-  chats: storedChats,
-  currentId: storedChats.length ? storedChats[storedChats.length - 1].id : null,
-  isStreaming: false,
-  sidebarOpen: true,
-  desktopSidebarOpen: true,
-  isMobileLayout: false,
-  systemPrompt: readStoredText('mci_system', DEFAULT_SYSTEM),
-};
-
-const CHAT_CTX_MSGS = 8;
-const CHAT_CTX_PER_MSG = 6000;
-const CHAT_CTX_TOTAL = 24000;
-let backendProvider = null;
-
-// ── INIT ──
-// ── LOADER / VERSION ──
-const FABRIC_VERSIONS = [];
-const FORGE_VERSIONS  = [];
-const NEO_VERSIONS    = [];
-const SPIGOT_VERSIONS = [
-  '1.21.11','1.21.10','1.21.4','1.21.3','1.21.2','1.21.1','1.21',
-  '1.20.6','1.20.4','1.20.2','1.20.1',
-  '1.19.4','1.19.3','1.19.2','1.19.1','1.19',
-  '1.18.2','1.18.1','1.18',
-  '1.17.1',
-  '1.16.5','1.16.4','1.16.3','1.16.2','1.16.1',
-  '1.15.2','1.15.1','1.15',
-  '1.14.4',
-  '1.13.2',
-  '1.12.2',
-  '1.8.8',
-];
-const PAPER_VERSIONS  = SPIGOT_VERSIONS;
-const BUILD_RESEARCH_PROMISES = new Map();
-const RESEARCHED_FABRIC_BUILD_DATA = {};
-const RESEARCHED_FORGE_BUILD_DATA = {};
-const RESEARCHED_NEOFORGE_BUILD_DATA = {};
-
-function replaceArrayContents(target, values) {
-  target.splice(0, target.length, ...(Array.isArray(values) ? values : []));
-}
-
-async function loadDynamicLoaderVersions() {
-  try {
-    const { response } = await fetchBackend('research', {}, '?kind=versions');
-    if (!response.ok) return;
-    const payload = await response.json().catch(() => ({}));
-    if (Array.isArray(payload?.versions?.fabric) && payload.versions.fabric.length) {
-      replaceArrayContents(FABRIC_VERSIONS, payload.versions.fabric);
-    }
-    if (Array.isArray(payload?.versions?.forge) && payload.versions.forge.length) {
-      replaceArrayContents(FORGE_VERSIONS, payload.versions.forge);
-    }
-    if (Array.isArray(payload?.versions?.neoforge) && payload.versions.neoforge.length) {
-      replaceArrayContents(NEO_VERSIONS, payload.versions.neoforge);
-    }
-  } catch {}
-}
-
-async function ensureBuildResearch(loader, version) {
-  if (loader !== 'fabric' && loader !== 'forge' && loader !== 'neoforge') return null;
-  const bucket = loader === 'fabric'
-    ? RESEARCHED_FABRIC_BUILD_DATA
-    : loader === 'forge'
-      ? RESEARCHED_FORGE_BUILD_DATA
-      : RESEARCHED_NEOFORGE_BUILD_DATA;
-  if (bucket[version]) return bucket[version];
-
-  const key = `${loader}:${version}`;
-  if (BUILD_RESEARCH_PROMISES.has(key)) {
-    return BUILD_RESEARCH_PROMISES.get(key);
-  }
-
-  const pending = (async () => {
-    try {
-      const query = `?kind=build&loader=${encodeURIComponent(loader)}&version=${encodeURIComponent(version)}`;
-      const { response } = await fetchBackend('research', {}, query);
-      if (!response.ok) return null;
-      const payload = await response.json().catch(() => ({}));
-      if (payload?.build && typeof payload.build === 'object') {
-        bucket[version] = payload.build;
-        return payload.build;
-      }
-    } catch {}
-    return null;
-  })();
-
-  BUILD_RESEARCH_PROMISES.set(key, pending);
-  const result = await pending;
-  BUILD_RESEARCH_PROMISES.delete(key);
-  return result;
-}
-
-function onLoaderChange() {
-  const loader = document.getElementById('loader-sel').value;
-  const map = { fabric: FABRIC_VERSIONS, forge: FORGE_VERSIONS, neoforge: NEO_VERSIONS, spigot: SPIGOT_VERSIONS, paper: PAPER_VERSIONS };
-  const versions = map[loader] || FABRIC_VERSIONS;
-  const sel = document.getElementById('version-sel');
-  const cur = sel.value;
-  sel.innerHTML = versions.map(v => `<option value="${v}"${v===cur?' selected':''}>${v}</option>`).join('');
-  if (sel.selectedIndex === -1 && versions.length) sel.value = versions[0];
-}
-
-window.addEventListener('DOMContentLoaded', async () => {
-  syncResponsiveLayout(true);
-  await loadDynamicLoaderVersions();
-  onLoaderChange();
-  renderChatList();
-
-  // Deep-link: if the URL hash matches a saved chat, open it directly
-  const hashId = window.location.hash.slice(1);
-  const linkedChat = hashId ? state.chats.find(c => c.id === hashId) : null;
-
-  if (linkedChat) {
-    state.currentId = linkedChat.id;
-    loadChat(linkedChat.id);
-  } else if (state.chats.length === 0) {
-    newChat();
-  } else {
-    state.currentId = state.currentId || state.chats[state.chats.length - 1].id;
-    showWelcome(true);
-  }
-
-  updateSidebarState();
-});
-
-window.addEventListener('resize', () => {
-  const nextIsMobile = isMobileLayout();
-  if (nextIsMobile !== state.isMobileLayout) {
-    syncResponsiveLayout();
-    updateSidebarState();
-  }
-});
-
-function getSelectedLoader() { return document.getElementById('loader-sel').value; }
-function getSelectedVersion() { return document.getElementById('version-sel').value; }
-
-function buildTargetContext(loader, version) {
-  return `[Target: ${loader} ${version}]`;
-}
-
-function isMobileLayout() {
-  return window.matchMedia('(max-width: 640px)').matches;
-}
-
-function syncResponsiveLayout(force = false) {
-  const nextIsMobile = isMobileLayout();
-  if (force || nextIsMobile !== state.isMobileLayout) {
-    state.isMobileLayout = nextIsMobile;
-    state.sidebarOpen = nextIsMobile ? false : state.desktopSidebarOpen;
-  }
-}
-
-function updateSidebarState() {
-  const sidebar = document.getElementById('sidebar');
-  const backdrop = document.getElementById('mobile-backdrop');
-  if (sidebar) sidebar.classList.toggle('collapsed', !state.sidebarOpen);
-  if (backdrop) backdrop.classList.toggle('visible', state.isMobileLayout && state.sidebarOpen);
-}
-
-// ── BACKEND ──
-function backendCandidates(name, query = '') {
-  const list = [
-    { provider: 'vercel', url: `/api/${name}${query}` },
-    { provider: 'netlify', url: `/.netlify/functions/${name}${query}` },
-  ];
-  if (backendProvider) list.sort((a,b) => a.provider===backendProvider ? -1 : b.provider===backendProvider ? 1 : 0);
-  return list;
-}
-
-async function fetchBackend(name, init = {}, query = '') {
-  const candidates = backendCandidates(name, query);
-  let lastResponse = null, lastUrl = candidates[0].url;
-  for (const c of candidates) {
-    let response;
-    try { response = await fetch(c.url, init); } catch { continue; }
-    lastResponse = response; lastUrl = c.url;
-    if (response.status === 404) continue;
-    backendProvider = c.provider;
-    return { response, url: c.url, provider: c.provider };
-  }
-  if (lastResponse) return { response: lastResponse, url: lastUrl, provider: backendProvider };
-  throw new Error('No supported backend endpoint responded.');
-}
-
-function backendUrl(name, query = '') { return backendCandidates(name, query)[0].url; }
-
-async function readErrorMessage(response, fallback) {
-  if (!response) return fallback;
-  try {
-    const ct = response.headers.get('content-type') || '';
-    if (ct.includes('application/json')) {
-      const j = await response.clone().json();
-      if (j?.message) return j.message;
-    }
-    const t = (await response.clone().text()).trim();
-    if (t) return t.slice(0, 500);
-  } catch {}
-  return fallback || `HTTP ${response?.status}`;
-}
-
-// ── MESSAGE BUILDING ──
-function truncateForModel(text, maxChars) {
-  const v = String(text || '');
-  if (v.length <= maxChars) return v;
-  const head = Math.floor(maxChars * 0.7);
-  const tail = Math.max(0, maxChars - head - 32);
-  return `${v.slice(0, head)}
-
-[...truncated...]
-
-${v.slice(v.length - tail)}`;
-}
-
-function buildModelMessages(messages) {
-  const all = Array.isArray(messages) ? messages : [];
-  const conv = all.filter(m => m.role === 'user' || m.role === 'assistant');
-  let recent = conv.slice(-CHAT_CTX_MSGS).map(m => ({
-    role: m.role,
-    content: truncateForModel(m.content, CHAT_CTX_PER_MSG),
-  }));
-  let req = [...recent];
-  const total = () => req.reduce((s,m) => s + String(m.content||'').length, 0);
-  while (total() > CHAT_CTX_TOTAL && recent.length > 3) {
-    recent.shift();
-    req = [...recent];
-  }
-  return req;
-}
-
-// ── SIDEBAR / CHAT MANAGEMENT ──
-function toggleSidebar() {
-  if (state.isMobileLayout) {
-    state.sidebarOpen = !state.sidebarOpen;
-  } else {
-    state.desktopSidebarOpen = !state.desktopSidebarOpen;
-    state.sidebarOpen = state.desktopSidebarOpen;
-  }
-  updateSidebarState();
-}
-
-function closeSidebar() {
-  if (!state.isMobileLayout) return;
-  state.sidebarOpen = false;
-  updateSidebarState();
-}
-
-function renderChatList() {
-  const list = document.getElementById('chat-list');
-  list.innerHTML = '';
-  if (!state.chats.length) {
-    list.innerHTML = '<div style="padding:16px 14px;font-size:11px;color:var(--text3);">No chats yet</div>';
-    return;
-  }
-  const today = new Date().toDateString();
-  const yesterday = new Date(Date.now() - 86400000).toDateString();
-  const groups = {};
-  [...state.chats].reverse().forEach(c => {
-    const d = new Date(c.created).toDateString();
-    const label = d === today ? 'Today' : d === yesterday ? 'Yesterday' : new Date(c.created).toLocaleDateString('en-US',{month:'short',day:'numeric'});
-    (groups[label] = groups[label] || []).push(c);
-  });
-  for (const [label, chats] of Object.entries(groups)) {
-    const sec = document.createElement('div');
-    sec.className = 'chat-group-label';
-    sec.textContent = label;
-    list.appendChild(sec);
-    chats.forEach(c => {
-      const item = document.createElement('div');
-      item.className = 'chat-item' + (c.id === state.currentId ? ' active' : '');
-      const badgeHtml = c.loader
-        ? `<span class="chat-item-badge">${escapeHtml(c.loader)} ${escapeHtml(c.version || '')}</span>`
-        : '';
-      item.innerHTML = `
-        <span class="chat-item-icon">▸</span>
-        <span class="chat-item-title">${escapeHtml(c.title)}</span>
-        ${badgeHtml}
-        <button class="chat-item-del" onclick="deleteChat(event,'${c.id}')">×</button>
-      `;
-      item.addEventListener('click', e => { if (!e.target.classList.contains('chat-item-del')) loadChat(c.id); });
-      list.appendChild(item);
-    });
-  }
-}
-
-function createDraftChat() {
-  const id = 'chat_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);
-  const chat = {
-    id,
-    title: 'New Chat',
-    created: Date.now(),
-    messages: [{ role: 'system', content: state.systemPrompt || DEFAULT_SYSTEM }],
-    loader: null,
-    version: null,
-    activityLog: [],
-  };
-  state.chats.push(chat);
-  state.currentId = id;
-  return chat;
-}
-
-function newChat() {
-  resetMessages();
-  createDraftChat();
-  renderChatActivity([]);
-  showWelcome(true);
-  document.getElementById('topbar-title').textContent = 'New Chat';
-  updateUrlHash(null);
-  saveChats();
-  closeSidebar();
-  document.getElementById('input-box').focus();
-}
-
-function loadChat(id) {
-  const chat = state.chats.find(c => c.id === id);
-  if (!chat) return;
-  state.currentId = id;
-  showWelcome(false);
-  resetMessages();
-  chat.messages.filter(m => m.role !== 'system').forEach(m => appendMessage(m.role, m.content, false));
-  renderChatActivity(chat.activityLog || []);
-  document.getElementById('topbar-title').textContent = chat.title;
-
-  // Restore loader/version selectors to what this chat used
-  if (chat.loader) {
-    const loaderSel = document.getElementById('loader-sel');
-    if (loaderSel && loaderSel.value !== chat.loader) {
-      loaderSel.value = chat.loader;
-      onLoaderChange();
-    }
-    if (chat.version) {
-      const versionSel = document.getElementById('version-sel');
-      if (versionSel) versionSel.value = chat.version;
-    }
-  }
-
-  updateUrlHash(id);
-  renderChatList();
-  closeSidebar();
-  scrollToBottom();
-}
-
-function deleteChat(e, id) {
-  e.stopPropagation();
-  state.chats = state.chats.filter(c => c.id !== id);
-  saveChats();
-  if (state.currentId === id) newChat();
-  else renderChatList();
-  closeSidebar();
-}
-
-function getCurrentChat() { return state.chats.find(c => c.id === state.currentId); }
-function saveChats() { writeStoredValue('mci_chats', JSON.stringify(state.chats)); renderChatList(); }
-
-function updateUrlHash(chatId) {
-  const hash = chatId ? `#${chatId}` : window.location.pathname;
-  history.replaceState(null, '', chatId ? `${window.location.pathname}${window.location.search}#${chatId}` : window.location.pathname + window.location.search);
-}
-
-function copyShareLink() {
-  const chat = getCurrentChat();
-  if (!chat || !chat.loader) {
-    // No chat started yet
-    return;
-  }
-  const url = `${window.location.origin}${window.location.pathname}#${chat.id}`;
-  navigator.clipboard.writeText(url).then(() => {
-    const btn = document.getElementById('share-btn');
-    btn.classList.add('copied');
-    btn.innerHTML = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> COPIED`;
-    setTimeout(() => {
-      btn.classList.remove('copied');
-      btn.innerHTML = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg> SHARE`;
-    }, 2000);
-  }).catch(() => {
-    // Fallback: select a temporary input
-    const inp = document.createElement('input');
-    inp.value = url;
-    document.body.appendChild(inp);
-    inp.select();
-    document.execCommand('copy');
-    document.body.removeChild(inp);
-  });
-}
-function showWelcome(show = true) { document.getElementById('welcome').style.display = show ? 'flex' : 'none'; }
-function resetMessages() {
-  const m = document.getElementById('messages');
-  m.querySelectorAll('.msg').forEach(el => el.remove());
-  setTypingVisible(false);
-  renderChatActivity([]);
-}
-function scrollToBottom() {
-  const w = document.getElementById('messages-wrap');
-  w.scrollTop = w.scrollHeight;
-}
-function autoResize(el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 180) + 'px'; }
-function handleKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }
-function sendStarter(el) {
-  document.getElementById('input-box').value = el.querySelector('.starter-text').textContent;
-  sendMessage();
-}
-function escapeHtml(t) {
-  return String(t||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-function setTypingVisible(visible) {
-  const typing = document.getElementById('typing');
-  if (!typing) return;
-  typing.classList.toggle('hidden', !visible);
-  typing.classList.toggle('visible', !!visible);
-}
-
-function renderChatActivity(entries = []) {
-  const logEl = document.getElementById('chat-activity-log');
-  if (!logEl) return;
-  logEl.innerHTML = '';
-  const list = Array.isArray(entries) ? entries.slice(-12) : [];
-  if (!list.length) {
-    logEl.innerHTML = '<div class="chat-activity-line">Waiting for activity...</div>';
-    return;
-  }
-  list.forEach(entry => {
-    const line = document.createElement('div');
-    line.className = 'chat-activity-line';
-    const time = entry?.time ? new Date(entry.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '--:--:--';
-    line.innerHTML = `<strong>${escapeHtml(time)}</strong> ${escapeHtml(entry?.message || '')}`;
-    logEl.appendChild(line);
-  });
-  logEl.scrollTop = logEl.scrollHeight;
-}
-
-function getCurrentChatActivity() {
-  const chat = getCurrentChat();
-  return Array.isArray(chat?.activityLog) ? chat.activityLog : [];
-}
-
-function clearChatActivity() {
-  const chat = getCurrentChat();
-  if (chat) {
-    chat.activityLog = [];
-    saveChats();
-  }
-  renderChatActivity([]);
-}
-
-function addChatActivity(message) {
-  if (!message) return;
-  const chat = getCurrentChat();
-  const next = getCurrentChatActivity().slice(-11);
-  next.push({
-    time: new Date().toISOString(),
-    message: String(message),
-  });
-  if (chat) {
-    chat.activityLog = next;
-    saveChats();
-  }
-  renderChatActivity(next);
-  scrollToBottom();
-}
-
-// ── RENDER ──
-function appendMessage(role, content, animate = true) {
-  const msgs = document.getElementById('messages');
-  const typing = document.getElementById('typing');
-  const el = document.createElement('div');
-  el.className = 'msg';
-  if (!animate) el.style.animation = 'none';
-
-  const avatar = role === 'user'
-    ? `<div class="msg-avatar user">U</div>`
-    : `<div class="msg-avatar ai">⛏</div>`;
-
-  el.innerHTML = `
-    <div class="msg-gutter">${avatar}</div>
-    <div class="msg-body">
-      <div class="msg-role ${role}">${role === 'user' ? 'YOU' : 'QWEN'}</div>
-      <div class="msg-content">${role === 'user' ? escapeHtml(content).replace(/\n/g,'<br>') : renderMd(content)}</div>
+<section class="sec" id="how-it-works">
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:80px;align-items:start">
+    <div>
+      <div class="sec-label">Process</div>
+      <h2 class="sec-title">Idea to JAR<br>in minutes</h2>
+      <p class="sec-desc">Just describe what you want. CodexMC handles the technical details.</p>
     </div>
-  `;
-  msgs.insertBefore(el, typing);
-  scrollToBottom();
-  return el.querySelector('.msg-content');
-}
-
-function renderMd(text) {
-  // fenced code blocks
-  text = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
-    const l = lang || 'java';
-    return `<div class="code-block">
-      <div class="code-block-header">
-        <span class="code-lang">${escapeHtml(l)}</span>
-        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+    <div class="steps">
+      <div class="step">
+        <div class="step-n">01</div>
+        <div>
+          <div class="step-title">Describe your mod</div>
+          <div class="step-desc">Type in plain English. "Add a custom ore that drops magic dust" — no API knowledge required to get started.</div>
+        </div>
       </div>
-      <pre><code>${escapeHtml(code.trimEnd())}</code></pre>
-    </div>`;
-  });
-  text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
-  text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  text = text.replace(/\*(.+?)\*/g, '<em>$1</em>');
-  text = text.replace(/^### (.+)$/gm, '<strong style="font-size:13px;display:block;margin:10px 0 5px">$1</strong>');
-  text = text.replace(/^## (.+)$/gm, '<strong style="font-size:14px;display:block;margin:12px 0 5px">$1</strong>');
-  text = text.replace(/^# (.+)$/gm, '<strong style="font-size:15px;display:block;margin:14px 0 6px">$1</strong>');
-  text = text.replace(/^[-*] (.+)$/gm, '<li>$1</li>');
-  text = text.replace(/(<li>[\s\S]*?<\/li>)+/g, m => `<ul>${m}</ul>`);
-  text = text.split(/\n\n+/).map(p => {
-    if (!p.trim() || p.startsWith('<')) return p;
-    return `<p>${p.replace(/\n/g,'<br>')}</p>`;
-  }).join('');
-  return text;
-}
-
-function copyCode(btn) {
-  const code = btn.closest('.code-block').querySelector('pre code').innerText;
-  navigator.clipboard.writeText(code).then(() => {
-    btn.textContent = 'Copied!';
-    btn.classList.add('copied');
-    setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1800);
-  });
-}
-
-// ── SEND MESSAGE (SSE streaming) ──
-async function sendMessage() {
-  if (state.isStreaming) return;
-  const input = document.getElementById('input-box');
-  const text = input.value.trim();
-  if (!text) return;
-
-  input.value = '';
-  input.style.height = 'auto';
-  document.getElementById('send-btn').disabled = true;
-  state.isStreaming = true;
-  showWelcome(false);
-  appendMessage('user', text);
-
-  if (!state.currentId) createDraftChat();
-  const chat = getCurrentChat();
-  if (chat && (chat.title === 'New Chat' || !chat.title.trim())) {
-    chat.title = text.length > 42 ? text.slice(0, 42) + '…' : text;
-    document.getElementById('topbar-title').textContent = chat.title;
-    renderChatList();
-  }
-
-  const loader = getSelectedLoader();
-  const version = getSelectedVersion();
-  chat.messages.push({ role: 'user', content: text });
-
-  // Lock loader/version to this chat on first real message
-  if (!chat.loader) {
-    chat.loader = loader;
-    chat.version = version;
-  }
-  updateUrlHash(chat.id);
-
-  clearChatActivity();
-  setTypingVisible(true);
-  addChatActivity(`Captured your ${loader} ${version} request.`);
-  addChatActivity('Researching official version metadata for this target.');
-  const researchPromise = ensureBuildResearch(loader, version)
-    .then(() => addChatActivity('Prepared researched build metadata and target context.'))
-    .catch(() => addChatActivity('Build metadata research fell back to cached/local defaults.'));
-  addChatActivity('Sending the request to the AI model.');
-  scrollToBottom();
-
-  try {
-    const { response } = await fetchBackend('chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'qwen/qwen-2.5-coder-32b-instruct:free',
-        messages: buildModelMessages(chat.messages),
-        loader, version,
-        max_tokens: 4096,
-        temperature: 0.2,
-      })
-    });
-
-    if (!response.ok) {
-      setTypingVisible(false);
-      const err = await response.json().catch(() => ({}));
-      appendMessage('ai', `**Error:** ${err.message || `HTTP ${response.status}`}`);
-      throw new Error('non-ok response');
-    }
-
-    addChatActivity('Connected to the AI stream. Waiting for the first tokens.');
-
-    const reader = response.body.getReader();
-    const dec = new TextDecoder();
-    let buf = '', fullText = '', contentEl = null;
-    let announcedStreaming = false;
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      const lines = buf.split('\n');
-      buf = lines.pop() ?? '';
-      for (const line of lines) {
-        const t = line.trim();
-        if (!t || !t.startsWith('data:')) continue;
-        try {
-          const evt = JSON.parse(t.slice(5).trim());
-          if (evt.error) throw new Error(evt.error);
-          if (evt.delta) {
-            if (!announcedStreaming) {
-              announcedStreaming = true;
-              addChatActivity('Streaming researched response back into the chat.');
-            }
-            fullText += evt.delta;
-            if (!contentEl) {
-              contentEl = appendMessage('ai', fullText);
-            } else {
-              contentEl.innerHTML = renderMd(fullText);
-              scrollToBottom();
-            }
-          }
-          if (evt.done && !contentEl && fullText) {
-            contentEl = appendMessage('ai', fullText);
-          }
-        } catch (pe) {
-          if (pe.message !== 'Unexpected end of JSON input') throw pe;
-        }
-      }
-    }
-
-    await researchPromise.catch(() => {});
-    if (!contentEl) {
-      contentEl = appendMessage('ai', fullText || 'The model returned an empty response.');
-    }
-    addChatActivity('Response complete. Saving the conversation.');
-    setTypingVisible(false);
-
-    chat.messages.push({ role: 'assistant', content: fullText });
-    saveChats();
-
-    if (contentEl && /```[\w]*\n[\s\S]*?```/.test(fullText)) {
-      injectBuildPrompt(contentEl.closest('.msg'), fullText);
-    }
-
-  } catch (err) {
-    addChatActivity(`Chat request failed: ${err.message || 'unknown error'}`);
-    setTypingVisible(false);
-    if (err.message !== 'non-ok response') appendMessage('ai', `**Error:** ${err.message}`);
-  }
-
-  state.isStreaming = false;
-  document.getElementById('send-btn').disabled = false;
-  scrollToBottom();
-}
-
-// ── BUILD SYSTEM ──
-const _buildStore = {};
-let _buildStoreIdx = 0;
-
-function injectBuildPrompt(msgEl, fullText) {
-  const existing = msgEl.querySelector('.build-prompt');
-  if (existing) existing.remove();
-  const key = 'build_' + (++_buildStoreIdx);
-  _buildStore[key] = fullText;
-
-  const el = document.createElement('div');
-  el.className = 'build-prompt';
-  el.innerHTML = `
-    <div class="build-prompt-title">Build this mod?</div>
-    <div class="build-prompt-sub">Optionally enter a custom mod name, or skip to use the default.</div>
-    <input class="build-name-input" type="text" maxlength="80" placeholder="Custom mod name (optional)">
-    <div class="build-name-note"></div>
-    <div class="build-prompt-btns">
-      <button class="build-btn build-btn-primary">Build Mod</button>
-      <button class="build-btn build-btn-secondary">Skip Name</button>
-      <button class="build-btn build-btn-ghost">Dismiss</button>
+      <div class="step">
+        <div class="step-n">02</div>
+        <div>
+          <div class="step-title">Pick loader & version</div>
+          <div class="step-desc">Select your mod platform and Minecraft version. CodexMC fetches live build metadata and mapping versions.</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-n">03</div>
+        <div>
+          <div class="step-title">Get compilable code</div>
+          <div class="step-desc">Receive multiple Java source files plus all build and resource files. Copy them directly into your IDE.</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-n">04</div>
+        <div>
+          <div class="step-title">Build & download JAR</div>
+          <div class="step-desc">Hit "Build Mod" to compile server-side with Gradle. Auto-fix retries on errors. Download the ready-to-use JAR.</div>
+        </div>
+      </div>
     </div>
-  `;
-  const nameInput = el.querySelector('.build-name-input');
-  const note = el.querySelector('.build-name-note');
-  el.querySelectorAll('.build-btn')[0].addEventListener('click', function() {
-    const name = nameInput.value.trim();
-    if (!name) { note.textContent = 'Enter a name or use Skip.'; nameInput.focus(); return; }
-    startBuild(this, _buildStore[key], name);
-  });
-  el.querySelectorAll('.build-btn')[1].addEventListener('click', function() { startBuild(this, _buildStore[key], ''); });
-  el.querySelectorAll('.build-btn')[2].addEventListener('click', function() { el.remove(); });
-  msgEl.querySelector('.msg-body').appendChild(el);
-  scrollToBottom();
-}
+  </div>
+</section>
+
+<section class="cta-sec">
+  <div class="cta-glow"></div>
+  <div class="sec-label">Get started free</div>
+  <h2 class="sec-title" style="margin-bottom:16px">Ready to mod?</h2>
+  <p class="sec-desc" style="margin: 0 auto 40px">Open the chat, describe your idea, and have working Java code in under a minute.</p>
+  <a href="/app" class="btn-primary" style="font-size:16px;padding:15px 34px;">
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="12,2 22,8.5 22,15.5 12,22 2,15.5 2,8.5"/></svg>
+    Open CodexMC
+  </a>
+</section>
+
+<footer>
+  <div class="footer-brand">Codex<em>MC</em></div>
+  <div class="footer-note">Minecraft Java Edition AI Modding Assistant</div>
+</footer>
 
-function dismissBuild(btn) { btn.closest('.build-prompt').remove(); }
-
-function extractCodeBlocks(text) {
-  const blocks = [];
-  const re = /```(\w*)\n?([\s\S]*?)```/g;
-  let m;
-  while ((m = re.exec(text)) !== null) blocks.push({ lang: m[1]||'java', code: m[2].trimEnd() });
-  return blocks;
-}
-
-const DEFAULT_FABRIC_BUILD_DATA = {
-  loomVersion: '1.14.10',
-  loaderVersion: '0.18.2',
-  fabricApiVersion: null,
-  mappingMode: 'yarn',
-  yarnVersion: null,
-  gradleVersion: '9.3.0',
-};
-
-const DEFAULT_FORGE_BUILD_DATA = {
-  forgeGradleVersion: '6.0.38',
-  toolchainResolverVersion: '0.9.0',
-  gradleVersion: '8.12.1',
-  forgeVersion: '52.1.14',
-  loaderVersion: '[52,)',
-};
-
-const DEFAULT_NEOFORGE_BUILD_DATA = {
-  userdevVersion: '7.0.120',
-  gradleVersion: '8.12.1',
-  neoforgeVersion: '21.1.107',
-  loaderVersion: '[1,)',
-};
-
-function safeModId(modName) {
-  const cleaned = String(modName || 'minecraftmod')
-    .toLowerCase()
-    .replace(/[^a-z0-9_]+/g, '_')
-    .replace(/^_+|_+$/g, '');
-  return cleaned || 'minecraftmod';
-}
-
-function getTargetJavaVersion(loader, version) {
-  const normalized = String(version || '');
-  if (/^26\./.test(normalized)) return 25;
-
-  const match = normalized.match(/^(\d+)\.(\d+)(?:\.(\d+))?/);
-  if (match) {
-    const major = Number(match[1]);
-    const minor = Number(match[2]);
-    const patch = Number(match[3] || 0);
-
-    if (major === 1) {
-      if (minor <= 16) return 8;
-      if (minor === 17) return 16;
-      if (minor > 20 || (minor === 20 && patch >= 5)) return 21;
-      return 17;
-    }
-
-    if (major > 1) return 21;
-  }
-
-  return loader === 'forge' || loader === 'fabric' || loader === 'neoforge' ? 17 : 17;
-}
-
-function getJavaVersionEnumName(javaVersion) {
-  return javaVersion === 8 ? 'VERSION_1_8' : `VERSION_${javaVersion}`;
-}
-
-function getFabricBuildData(version) {
-  return { ...DEFAULT_FABRIC_BUILD_DATA, ...(RESEARCHED_FABRIC_BUILD_DATA[version] || {}) };
-}
-
-function getForgeBuildData(version) {
-  return { ...DEFAULT_FORGE_BUILD_DATA, ...(RESEARCHED_FORGE_BUILD_DATA[version] || {}) };
-}
-
-
-
-function getFabricBuildData(version) {
-  return { ...DEFAULT_FABRIC_BUILD_DATA, ...(RESEARCHED_FABRIC_BUILD_DATA[version] || {}) };
-}
-function getForgeBuildData(version) {
-  return { ...DEFAULT_FORGE_BUILD_DATA, ...(RESEARCHED_FORGE_BUILD_DATA[version] || {}) };
-}
-function getNeoForgeBuildData(version) {
-  return { ...DEFAULT_NEOFORGE_BUILD_DATA, ...(RESEARCHED_NEOFORGE_BUILD_DATA[version] || {}) };
-}
-function getFabricYarnFallback(version) {
-  const key = String(version || '');
-  if (key === '1.21.11') return '1.21.11+build.4';
-  if (key === '1.21.10') return '1.21.10+build.3';
-  if (key === '1.21.4') return '1.21.4+build.8';
-  if (key === '1.21.2') return '1.21.2+build.1';
-  if (key === '1.21.1') return '1.21.1+build.3';
-  if (key === '1.21') return '1.21+build.9';
-  return null;
-}
-function isValidYarnVersion(version) {
-  return /^\d+\.\d+(?:\.\d+)?\+build\.\d+$/.test(String(version || ''));
-}
-function isFabricNonObfuscatedVersion(version) { return /^26\./.test(String(version||'')); }
-function getTargetMappingMode(loader, version) {
-  if (loader === 'fabric') {
-    const f = getFabricBuildData(version);
-    if (f.mappingMode === 'none') return 'none';
-    if (isValidYarnVersion(f.yarnVersion) || isValidYarnVersion(getFabricYarnFallback(version)) || f.mappingMode === 'yarn') return 'yarn';
-    return 'yarn';
-  }
-  if (loader === 'forge' || loader === 'neoforge') return 'official';
-  return 'official';
-}
-function getSelectedLoaderVersions(loader) {
-  const map = { fabric: FABRIC_VERSIONS, forge: FORGE_VERSIONS, neoforge: NEO_VERSIONS, spigot: SPIGOT_VERSIONS, paper: PAPER_VERSIONS };
-  return map[loader] || FABRIC_VERSIONS;
-}
-
-
-function buildGradle(loader, version, modName) {
-  const javaVersion = getTargetJavaVersion(loader, version);
-  const javaVersionEnum = getJavaVersionEnumName(javaVersion);
-
-  if (loader === 'fabric') {
-    const fabric = getFabricBuildData(version);
-    const mappingMode = getTargetMappingMode(loader, version);
-    const loomPluginId = 'net.fabricmc.fabric-loom';
-    const mappingsLine = mappingMode === 'official'
-      ? '    mappings loom.officialMojangMappings()'
-      : mappingMode === 'yarn'
-        ? '    mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"'
-        : '    // 26.1+ runs in a non-obfuscated environment; no mappings dependency is required.';
-    return `plugins {
-    id '${loomPluginId}' version '${fabric.loomVersion}'
-    id 'maven-publish'
-}
-
-version = project.mod_version
-group = project.maven_group
-
-base {
-    archivesName = project.archives_base_name
-}
-
-repositories {
-    mavenCentral()
-    maven { url = 'https://maven.fabricmc.net/' }
-}
-
-dependencies {
-    minecraft "com.mojang:minecraft:\${project.minecraft_version}"
-${mappingsLine}
-    implementation "net.fabricmc:fabric-loader:\${project.loader_version}"
-    // Add Fabric API here only if your generated code imports net.fabricmc.fabric.api.*.
-}
-
-processResources {
-    inputs.property "version", project.version
-
-    filesMatching("fabric.mod.json") {
-        expand "version": project.version
-    }
-}
-
-tasks.withType(JavaCompile).configureEach {
-    it.options.release = ${javaVersion}
-}
-
-java {
-    withSourcesJar()
-    sourceCompatibility = JavaVersion.${javaVersionEnum}
-    targetCompatibility = JavaVersion.${javaVersionEnum}
-}
-
-publishing {
-    publications {
-        mavenJava(MavenPublication) {
-            from components.java
-        }
-    }
-}`;
-  } else if (loader === 'forge') {
-    const forge = getForgeBuildData(version);
-    const modId = safeModId(modName);
-    return `plugins {
-    id 'eclipse'
-    id 'idea'
-    id 'maven-publish'
-    id 'net.minecraftforge.gradle' version '${forge.forgeGradleVersion}'
-}
-
-version = project.mod_version
-group = project.mod_group_id
-
-base {
-    archivesName = project.mod_id
-}
-
-java {
-    toolchain.languageVersion = JavaLanguageVersion.of(${javaVersion})
-}
-
-minecraft {
-    mappings channel: 'official', version: project.minecraft_version
-    copyIdeResources = true
-
-    runs {
-        configureEach {
-            workingDirectory project.file('run')
-
-            property 'forge.logging.markers', 'REGISTRIES'
-            property 'forge.logging.console.level', 'debug'
-
-            mods {
-                "${modId}" {
-                    source sourceSets.main
-                }
-            }
-        }
-
-        client {
-        }
-
-        server {
-        }
-    }
-}
-
-repositories {
-    mavenCentral()
-}
-
-dependencies {
-    minecraft "net.minecraftforge:forge:\${project.minecraft_version}-\${project.forge_version}"
-}
-
-processResources {
-    var replaceProperties = [
-        minecraft_version: project.minecraft_version,
-        mod_id: project.mod_id,
-        mod_name: project.mod_name,
-        mod_version: project.mod_version
-    ]
-    inputs.properties replaceProperties
-
-    filesMatching(['META-INF/mods.toml']) {
-        expand replaceProperties
-    }
-}
-
-tasks.withType(JavaCompile).configureEach {
-    options.encoding = 'UTF-8'
-}
-
-publishing {
-    publications {
-        mavenJava(MavenPublication) {
-            artifact jar
-        }
-    }
-}`;
-  }
-
-  return `plugins {
-    id 'net.neoforged.gradle.userdev' version '${getNeoForgeBuildData(version).userdevVersion}'
-}
-
-version = '1.0.0'
-group = 'com.minecraftmod'
-base { archivesName = '${modName.toLowerCase()}' }
-
-minecraft { version = '${version}' }
-
-dependencies {
-    implementation "net.neoforged:neoforge:${getNeoForgeBuildData(version).neoforgeVersion}"
-}
-
-java {
-    toolchain.languageVersion = JavaLanguageVersion.of(${javaVersion})
-    sourceCompatibility = JavaVersion.${javaVersionEnum}
-    targetCompatibility = JavaVersion.${javaVersionEnum}
-}`;
-}
-
-function settingsGradle(loader, version, modName) {
-  if (loader === 'fabric') {
-    return `pluginManagement {
-    repositories {
-        maven {
-            name = 'Fabric'
-            url = 'https://maven.fabricmc.net/'
-        }
-        gradlePluginPortal()
-        mavenCentral()
-    }
-}
-
-rootProject.name = '${safeModId(modName)}'`;
-  }
-
-  if (loader === 'forge') {
-    const forge = getForgeBuildData(version);
-    return `pluginManagement {
-    repositories {
-        gradlePluginPortal()
-        maven {
-            name = 'MinecraftForge'
-            url = 'https://maven.minecraftforge.net/'
-        }
-        mavenCentral()
-    }
-}
-
-plugins {
-    id 'org.gradle.toolchains.foojay-resolver-convention' version '${forge.toolchainResolverVersion}'
-}
-
-rootProject.name = '${safeModId(modName)}'`;
-  }
-
-  return `rootProject.name = '${safeModId(modName)}'`;
-}
-
-function gradleProps(loader, version, modName) {
-  const archiveName = safeModId(modName);
-  const javaVersion = getTargetJavaVersion(loader, version);
-  if (loader === 'fabric') {
-    const fabric = getFabricBuildData(version);
-    return `# Gradle Properties
-org.gradle.jvmargs=-Xmx4G
-org.gradle.parallel=true
-
-minecraft_version=${version}
-loader_version=${fabric.loaderVersion}
-loom_version=${fabric.loomVersion}
-yarn_mappings=${isValidYarnVersion(fabric.yarnVersion) ? fabric.yarnVersion : (getFabricYarnFallback(version) || '')}
-mod_version=1.0.0
-java_version=${javaVersion}
-maven_group=com.minecraftmod
-archives_base_name=${archiveName}
-mod_id=${archiveName}
-# fabric_version=${fabric.fabricApiVersion || '<add a verified Fabric API version if your mod needs Fabric API>'}`;
-  }
-
-  if (loader === 'forge') {
-    const forge = getForgeBuildData(version);
-    return `# Gradle Properties
-org.gradle.jvmargs=-Xmx4G
-org.gradle.parallel=true
-
-minecraft_version=${version}
-forge_version=${forge.forgeVersion}
-mod_version=1.0.0
-java_version=${javaVersion}
-mod_group_id=com.minecraftmod
-mod_name=${modName}
-mod_id=${archiveName}`;
-  }
-
-  return `# Gradle Properties
-org.gradle.jvmargs=-Xmx4G
-minecraft_version=${version}
-loader=${loader}
-mod_version=1.0.0
-java_version=${javaVersion}
-mod_group_id=com.minecraftmod
-mod_id=${archiveName}`;
-}
-
-function fabricModJson(version, modName, entrypoints) {
-  const javaVersion = getTargetJavaVersion('fabric', version);
-  const json = {
-    schemaVersion: 1,
-    id: safeModId(modName),
-    version: '${version}',
-    name: modName,
-    description: 'Generated by CodexMC',
-    authors: ['CodexMC'],
-    environment: '*',
-    entrypoints: { main: [entrypoints.main] },
-    depends: {
-      fabricloader: '>=0.16.0',
-      minecraft: `~${version}`,
-      java: `>=${javaVersion}`
-    }
-  };
-  if (entrypoints.client) {
-    json.entrypoints.client = [entrypoints.client];
-  }
-  return JSON.stringify(json, null, 2);
-}
-
-function forgeModsToml(version, modName) {
-  const forge = getForgeBuildData(version);
-  return `modLoader="javafml"
-loaderVersion="${forge.loaderVersion}"
-license="MIT"
-
-[[mods]]
-modId="\${mod_id}"
-version="\${mod_version}"
-displayName="\${mod_name}"
-description="Generated by CodexMC"
-
-[[dependencies.\${mod_id}]]
-    modId="minecraft"
-    mandatory=true
-    versionRange="[${version},)"
-    ordering="NONE"
-    side="BOTH"`;
-}
-
-function neoforgeModsToml(version, modName) {
-  return `modLoader="javafml"
-loaderVersion="[1,)"
-license="MIT"
-
-[[mods]]
-modId="${modName.toLowerCase()}"
-version="1.0.0"
-displayName="${modName}"
-description="Generated by CodexMC"
-
-[[dependencies.${modName.toLowerCase()}]]
-    modId="neoforge"
-    type="required"
-    versionRange="[${version},)"
-    ordering="NONE"
-    side="BOTH"`;
-}
-
-
-// â”€â”€ Gradle Wrapper generators â”€â”€
-function gradleWrapperProperties(loader, version) {
-  const researchedGradle = loader === 'fabric'
-    ? getFabricBuildData(version).gradleVersion
-    : loader === 'forge'
-      ? getForgeBuildData(version).gradleVersion
-      : loader === 'neoforge'
-        ? getNeoForgeBuildData(version).gradleVersion
-      : '8.12.1';
-  const distributionUrl = `https\\://services.gradle.org/distributions/gradle-${researchedGradle || '8.12.1'}-bin.zip`;
-  return `distributionBase=GRADLE_USER_HOME
-distributionPath=wrapper/dists
-distributionUrl=${distributionUrl}
-networkTimeout=10000
-validateDistributionUrl=true
-zipStoreBase=GRADLE_USER_HOME
-zipStorePath=wrapper/dists`;
-}
-
-function gradleWrapperJarBase64() {
-  return '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Zy9ncmFkbGUvY2xpL0NvbW1hbmRMaW5lUGFyc2VyJEFmdGVyT3B0aW9ucy5jbGFzc1VUBQABAAAAAFBLAQIUABQACAgIAAAAIQCj0ttQVAMAAJMHAAA8AAkAAAAAAAAAAAAAAEkWAABvcmcvZ3JhZGxlL2NsaS9Db21tYW5kTGluZVBhcnNlciRCZWZvcmVGaXJzdFN1YkNvbW1hbmQuY2xhc3NVVAUAAQAAAABQSwECFAAUAAgICAAAACEALlZDIGAHAAA6DwAAPQAJAAAAAAAAAAAAAAAQGgAAb3JnL2dyYWRsZS9jbGkvQ29tbWFuZExpbmVQYXJzZXIkS25vd25PcHRpb25QYXJzZXJTdGF0ZS5jbGFzc1VUBQABAAAAAFBLAQIUABQACAgIAAAAIQDU5SDkTAIAAJcEAAA8AAkAAAAAAAAAAAAAAOQhAABvcmcvZ3JhZGxlL2NsaS9Db21tYW5kTGluZVBhcnNlciRNaXNzaW5nT3B0aW9uQXJnU3RhdGUuY2xhc3NVVAUAAQAAAABQSwECFAAUAAgICAAAACEAmT0V29YCAABKBQAAPQAJAAAAAAAAAAAAAACjJAAAb3JnL2dyYWRsZS9jbGkvQ29tbWFuZExpbmVQYXJzZXIkT3B0aW9uQXdhcmVQYXJzZXJTdGF0ZS5jbGFzc1VUBQABAAAAAFBLAQIUABQACAgIAAAAIQCflW/2oQEAAH0CAAA4AAkAAAAAAAAAAAAAAO0nAABvcmcvZ3JhZGxlL2NsaS9Db21tYW5kTGluZVBhcnNlciRPcHRpb25QYXJzZXJTdGF0ZS5jbGFzc1VUBQABAAAAAFBLAQIUABQACAgIAAAAIQBXvGfjIgIAAGYDAAAzAAkAAAAAAAAAAAAAAP0pAABvcmcvZ3JhZGxlL2NsaS9Db21tYW5kTGluZVBhcnNlciRPcHRpb25TdHJpbmcuY2xhc3NVVAUAAQAAAABQSwECFAAUAAgICAAAACEAYjZYZqYBAADOAgAAMgAJAAAAAAAAAAAAAACJLAAAb3JnL2dyYWRsZS9jbGkvQ29tbWFuZExpbmVQYXJzZXIkUGFyc2VyU3RhdGUuY2xhc3NVVAUAAQAAAABQSwECFAAUAAgICAAAACEA/Y4pdXQCAADHBAAAPwAJAAAAAAAAAAAAAACYLgAAb3JnL2dyYWRsZS9jbGkvQ29tbWFuZExpbmVQYXJzZXIkVW5rbm93bk9wdGlvblBhcnNlclN0YXRlLmNsYXNzVVQFAAEAAAAAUEsBAhQAFAAICAgAAAAhAEoBjirqBAAA0ggAACYACQAAAAAAAAAAAAAAgjEAAG9yZy9ncmFkbGUvY2xpL0NvbW1hbmRMaW5lUGFyc2VyLmNsYXNzVVQFAAEAAAAAUEsBAhQAFAAICAgAAAAhAIKL8BCEBAAAUggAACYACQAAAAAAAAAAAAAAyTYAAG9yZy9ncmFkbGUvY2xpL1BhcnNlZENvbW1hbmRMaW5lLmNsYXNzVVQFAAEAAAAAUEsBAhQAFAAICAgAAAAhAO2cvGdSAQAArAEAACwACQAAAAAAAAAAAAAAqjsAAG9yZy9ncmFkbGUvY2xpL1BhcnNlZENvbW1hbmRMaW5lT3B0aW9uLmNsYXNzVVQFAAEAAAAAUEsBAhQAFAAICAgAAAAhAM7QOawiBQAAVggAADMACQAAAAAAAAAAAAAAXz0AAG9yZy9ncmFkbGUvaW50ZXJuYWwvZmlsZS9QYXRoVHJhdmVyc2FsQ2hlY2tlci5jbGFzc1VUBQABAAAAAFBLAQIUABQACAgIAAAAIQDp+MhHngEAACYCAABBAAkAAAAAAAAAAAAAAOtCAABvcmcvZ3JhZGxlL2ludGVybmFsL2ZpbGUvbG9ja2luZy9FeGNsdXNpdmVGaWxlQWNjZXNzTWFuYWdlci5jbGFzc1VUBQABAAAAAFBLAQIUABQACAgIAAAAIQBE8acw2wEAAMcCAAA+AAkAAAAAAAAAAAAAAAFFAABvcmcvZ3JhZGxlL3V0aWwvaW50ZXJuYWwvV3JhcHBlckRpc3RyaWJ1dGlvblVybENvbnZlcnRlci5jbGFzc1VUBQABAAAAAFBLAQIUABQACAgIAAAAIQClNa2HjwEAAB4CAAAvAAkAAAAAAAAAAAAAAFFHAABvcmcvZ3JhZGxlL3dyYXBwZXIvQm9vdHN0cmFwTWFpblN0YXJ0ZXIkMS5jbGFzc1VUBQABAAAAAFBLAQIUABQACAgIAAAAIQBgdBonSwMAABIFAABBAAkAAAAAAAAAAAAAAEZJAABvcmcvZ3JhZGxlL3dyYXBwZXIvRG93bmxvYWQkRGVmYXVsdERvd25sb2FkUHJvZ3Jlc3NMaXN0ZW5lci5jbGFzc1VUBQABAAAAAFBLAQIUABQACAgIAAAAIQACc6nUBwMAAEEFAAA0AAkAAAAAAAAAAAAAAAlNAABvcmcvZ3JhZGxlL3dyYXBwZXIvRG93bmxvYWQkUHJveHlBdXRoZW50aWNhdG9yLmNsYXNzVVQFAAEAAAAAUEsBAhQAFAAICAgAAAAhABQxDlHZCQAA5hIAACEACQAAAAAAAAAAAAAAe1AAAG9yZy9ncmFkbGUvd3JhcHBlci9Eb3dubG9hZC5jbGFzc1VUBQABAAAAAFBLAQIUABQACAgIAAAAIQCqi+MW2QEAALICAAAtAAkAAAAAAAAAAAAAAKxaAABvcmcvZ3JhZGxlL3dyYXBwZXIvR3JhZGxlVXNlckhvbWVMb29rdXAuY2xhc3NVVAUAAQAAAABQSwECFAAUAAgICAAAACEAodQH4X8WAABdLQAAKgAJAAAAAAAAAAAAAADpXAAAb3JnL2dyYWRsZS93cmFwcGVyL0dyYWRsZVdyYXBwZXJNYWluLmNsYXNzVVQFAAEAAAAAUEsBAhQAFAAICAgAAAAhAJOC8wXEDAAAshgAACIACQAAAAAAAAAAAAAAyXMAAG9yZy9ncmFkbGUvd3JhcHBlci9JbnN0YWxsJDEuY2xhc3NVVAUAAQAAAABQSwECFAAUAAgICAAAACEAarrq82oBAADnAQAALQAJAAAAAAAAAAAAAADmgAAAb3JnL2dyYWRsZS93cmFwcGVyL0luc3RhbGwkSW5zdGFsbENoZWNrLmNsYXNzVVQFAAEAAAAAUEsBAhQAFAAICAgAAAAhAEmBk+cSEQAA0yAAACAACQAAAAAAAAAAAAAAtIIAAG9yZy9ncmFkbGUvd3JhcHBlci9JbnN0YWxsLmNsYXNzVVQFAAEAAAAAUEsBAhQAFAAICAgAAAAhACeuAolbAgAAWgQAAB8ACQAAAAAAAAAAAAAAHZQAAG9yZy9ncmFkbGUvd3JhcHBlci9Mb2dnZXIuY2xhc3NVVAUAAQAAAABQSwECFAAUAAgICAAAACEA7t7O9SQBAABqAQAAJgAJAAAAAAAAAAAAAADOlgAAb3JnL2dyYWRsZS93cmFwcGVyL1BhdGhBc3NlbWJsZXIuY2xhc3NVVAUAAQAAAABQSwECFAAUAAgICAAAACEAdFgpujIEAABmBwAALgAJAAAAAAAAAAAAAABPmAAAb3JnL2dyYWRsZS93cmFwcGVyL1Byb3BlcnRpZXNGaWxlSGFuZGxlci5jbGFzc1VUBQABAAAAAFBLAQIUABQACAgIAAAAIQCzldMe7gIAAFAGAAAtAAkAAAAAAAAAAAAAAOacAABvcmcvZ3JhZGxlL3dyYXBwZXIvV3JhcHBlckNvbmZpZ3VyYXRpb24uY2xhc3NVVAUAAQAAAABQSwECFAAUAAgICAAAACEABq9Rm6IGAABEDQAAKAAJAAAAAAAAAAAAAAA4oAAAb3JnL2dyYWRsZS93cmFwcGVyL1dyYXBwZXJFeGVjdXRvci5jbGFzc1VUBQABAAAAAFBLBQYAAAAAIQAhABANAAA5pwAAAAA=';
-}
-
-function gradlewScript() {
-  return `#!/bin/sh
-
-#
-# Copyright 2015 the original authors.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-#
-
-app_path=$0
-
-while
-    APP_HOME=\${app_path%"\${app_path##*/}"}
-    [ -h "$app_path" ]
-do
-    ls=$( ls -ld "$app_path" )
-    link=\${ls#*' -> '}
-    case $link in
-      /*)   app_path=$link ;;
-      *)    app_path=$APP_HOME$link ;;
-    esac
-done
-
-APP_BASE_NAME=\${0##*/}
-APP_HOME=$( cd -P "\${APP_HOME:-./}" > /dev/null && printf '%s\n' "$PWD" ) || exit
-
-MAX_FD=maximum
-
-warn () {
-    echo "$*"
-} >&2
-
-die () {
-    echo
-    echo "$*"
-    echo
-    exit 1
-} >&2
-
-cygwin=false
-msys=false
-darwin=false
-nonstop=false
-case "$( uname )" in
-  CYGWIN* )         cygwin=true  ;;
-  Darwin* )         darwin=true  ;;
-  MSYS* | MINGW* )  msys=true    ;;
-  NONSTOP* )        nonstop=true ;;
-esac
-
-if [ -n "$JAVA_HOME" ] ; then
-    if [ -x "$JAVA_HOME/jre/sh/java" ] ; then
-        JAVACMD=$JAVA_HOME/jre/sh/java
-    else
-        JAVACMD=$JAVA_HOME/bin/java
-    fi
-    if [ ! -x "$JAVACMD" ] ; then
-        die "ERROR: JAVA_HOME is set to an invalid directory: $JAVA_HOME
-
-Please set the JAVA_HOME variable in your environment to match the
-location of your Java installation."
-    fi
-else
-    JAVACMD=java
-    if ! command -v java >/dev/null 2>&1
-    then
-        die "ERROR: JAVA_HOME is not set and no 'java' command could be found in your PATH.
-
-Please set the JAVA_HOME variable in your environment to match the
-location of your Java installation."
-    fi
-fi
-
-if ! "$cygwin" && ! "$darwin" && ! "$nonstop" ; then
-    case $MAX_FD in
-      max*)
-        MAX_FD=$( ulimit -H -n ) ||
-            warn "Could not query maximum file descriptor limit"
-    esac
-    case $MAX_FD in
-      '' | soft) :;;
-      *)
-        ulimit -n "$MAX_FD" ||
-            warn "Could not set maximum file descriptor limit to $MAX_FD"
-    esac
-fi
-
-if "$cygwin" || "$msys" ; then
-    APP_HOME=$( cygpath --path --mixed "$APP_HOME" )
-    JAVACMD=$( cygpath --unix "$JAVACMD" )
-
-    for arg do
-        if
-            case $arg in
-              -*)   false ;;
-              /?*)  t=\${arg#/} t=/\${t%%/*}
-                    [ -e "$t" ] ;;
-              *)    false ;;
-            esac
-        then
-            arg=$( cygpath --path --ignore --mixed "$arg" )
-        fi
-        shift
-        set -- "$@" "$arg"
-    done
-fi
-
-DEFAULT_JVM_OPTS=
-
-exec "$JAVACMD" \
-        $DEFAULT_JVM_OPTS \
-        $JAVA_OPTS \
-        $GRADLE_OPTS \
-        "-Dorg.gradle.appname=$APP_BASE_NAME" \
-        -classpath "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" \
-        org.gradle.wrapper.GradleWrapperMain \
-        "$@"`;
-}
-
-function gradlewBatScript() {
-  return `@rem
-@rem Copyright 2015 the original author or authors.
-@rem
-@rem Licensed under the Apache License, Version 2.0 (the "License");
-@rem you may not use this file except in compliance with the License.
-@rem You may obtain a copy of the License at
-@rem
-@rem      https://www.apache.org/licenses/LICENSE-2.0
-@rem
-@rem Unless required by applicable law or agreed to in writing, software
-@rem distributed under the License is distributed on an "AS IS" BASIS,
-@rem WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-@rem See the License for the specific language governing permissions and
-@rem limitations under the License.
-@rem
-@rem SPDX-License-Identifier: Apache-2.0
-@rem
-
-@if "%DEBUG%"=="" @echo off
-@rem ##########################################################################
-@rem
-@rem  Gradle startup script for Windows
-@rem
-@rem ##########################################################################
-
-if "%OS%"=="Windows_NT" setlocal
-
-set DIRNAME=%~dp0
-if "%DIRNAME%"=="" set DIRNAME=.
-set APP_BASE_NAME=%~n0
-set APP_HOME=%DIRNAME%
-
-for %%i in ("%APP_HOME%") do set APP_HOME=%%~fi
-
-set DEFAULT_JVM_OPTS="-Xmx64m" "-Xms64m"
-
-if defined JAVA_HOME goto findJavaFromJavaHome
-
-set JAVA_EXE=java.exe
-%JAVA_EXE% -version >NUL 2>&1
-if %ERRORLEVEL% equ 0 goto execute
-
-echo. 1>&2
-echo ERROR: JAVA_HOME is not set and no 'java' command could be found in your PATH. 1>&2
-echo. 1>&2
-echo Please set the JAVA_HOME variable in your environment to match the 1>&2
-echo location of your Java installation. 1>&2
-
-goto fail
-
-:findJavaFromJavaHome
-set JAVA_HOME=%JAVA_HOME:"=%
-set JAVA_EXE=%JAVA_HOME%/bin/java.exe
-if exist "%JAVA_EXE%" goto execute
-
-echo. 1>&2
-echo ERROR: JAVA_HOME is set to an invalid directory: %JAVA_HOME% 1>&2
-echo. 1>&2
-echo Please set the JAVA_HOME variable in your environment to match the 1>&2
-echo location of your Java installation. 1>&2
-
-goto fail
-
-:execute
-@rem Setup the command line
-
-@rem Execute Gradle
-"%JAVA_EXE%" %DEFAULT_JVM_OPTS% %JAVA_OPTS% %GRADLE_OPTS% "-Dorg.gradle.appname=%APP_BASE_NAME%" -jar "%APP_HOME%\\gradle\\wrapper\\gradle-wrapper.jar" %*
-
-:end
-if %ERRORLEVEL% equ 0 goto mainEnd
-
-:fail
-set EXIT_CODE=%ERRORLEVEL%
-if %EXIT_CODE% equ 0 set EXIT_CODE=1
-if not ""=="%GRADLE_EXIT_CONSOLE%" exit %EXIT_CODE%
-exit /b %EXIT_CODE%
-
-:mainEnd
-if "%OS%"=="Windows_NT" endlocal
-
-:omega
-`;
-}
-function generateBuildGradle(loader, version, modId) {
-  const javaVersion = getTargetJavaVersion(loader, version);
-
-  if (loader === "fabric") {
-    return `
-plugins {
-    id 'fabric-loom' version '1.4-SNAPSHOT'
-}
-
-group = 'com.example'
-version = '1.0.0'
-
-repositories {
-    maven { url = 'https://maven.fabricmc.net/' }
-    mavenCentral()
-}
-
-dependencies {
-    minecraft "com.mojang:minecraft:${version}"
-    mappings "net.fabricmc:yarn:${version}+build.1:v2"
-    modImplementation "net.fabricmc:fabric-loader:0.15.11"
-}
-
-java {
-    toolchain.languageVersion = JavaLanguageVersion.of(${javaVersion})
-}
-`;
-  }
-
-  if (loader === "forge") {
-    return `
-plugins {
-    id 'net.minecraftforge.gradle' version '[6.0,6.2)'
-}
-
-java {
-    toolchain.languageVersion = JavaLanguageVersion.of(${javaVersion})
-}
-
-repositories {
-    maven { url = 'https://maven.minecraftforge.net' }
-    mavenCentral()
-}
-
-dependencies {
-    minecraft "net.minecraftforge:forge:${version}-52.1.14"
-}
-
-minecraft {
-    mappings channel: 'official', version: '${version}'
-}
-`;
-  }
-
-  if (loader === "neoforge") {
-    return `
-plugins {
-    id 'net.neoforged.gradle.userdev' version '7.0.120'
-}
-
-java {
-    toolchain.languageVersion = JavaLanguageVersion.of(${javaVersion})
-}
-
-repositories {
-    maven { url = 'https://maven.neoforged.net/releases' }
-    mavenCentral()
-}
-
-dependencies {
-    implementation "net.neoforged:neoforge:${version}.1.0"
-}
-`;
-  }
-}
-
-function generateNeoForgeMain(pkg, modId) {
-  return `
-package ${pkg};
-
-import net.neoforged.fml.common.Mod;
-
-@Mod("${modId}")
-public class ModMain {
-    public ModMain() {
-        System.out.println("${modId} loaded!");
-    }
-}
-`;
-}
-
-function generateNeoForgeModsToml(modId) {
-  return `
-modLoader="javafml"
-loaderVersion="[2,)"
-license="MIT"
-
-[[mods]]
-modId="${modId}"
-version="1.0.0"
-displayName="${modId}"
-`;
-}
-
-function generateForgeMain(pkg, modId) {
-  return `
-package ${pkg};
-
-import net.minecraftforge.fml.common.Mod;
-
-@Mod("${modId}")
-public class ModMain {
-    public ModMain() {
-        System.out.println("${modId} loaded!");
-    }
-}
-`;
-}
-
-function generateForgeModsToml(modId) {
-  return `
-modLoader="javafml"
-loaderVersion="[52,)"
-license="MIT"
-
-[[mods]]
-modId="${modId}"
-version="1.0.0"
-displayName="${modId}"
-`;
-}
-
-function generateFabricMain(pkg, modId) {
-  return `
-package ${pkg};
-
-import net.fabricmc.api.ModInitializer;
-
-public class ModMain implements ModInitializer {
-    @Override
-    public void onInitialize() {
-        System.out.println("${modId} loaded!");
-    }
-}
-`;
-}
-
-function generateFabricModJson(modId, pkg) {
-  return `
-{
-  "schemaVersion": 1,
-  "id": "${modId}",
-  "version": "1.0.0",
-  "name": "${modId}",
-  "entrypoints": {
-    "main": [
-      "${pkg}.ModMain"
-    ]
-  },
-  "depends": {
-    "fabricloader": ">=0.15.0",
-    "minecraft": "*"
-  }
-}
-`;
-}
-
-function generateGradleProperties(loader, version, modId) {
-  const javaVersion = getTargetJavaVersion(loader, version);
-  return `
-org.gradle.jvmargs=-Xmx3G
-org.gradle.daemon=false
-
-minecraft_version=${version}
-mod_id=${modId}
-mod_name=${modId}
-mod_version=1.0.0
-java_version=${javaVersion}
-`;
-}
-
-function generateProjectZip(loader, version, modName = "Example Mod") {
-  const zip = new JSZip();
-
-  const modId = safeModId(modName);
-  const pkg = `com.example.${modId}`;
-
-  // Root files
-  zip.file("settings.gradle", generateSettingsGradle(loader));
-  zip.file("build.gradle", generateBuildGradle(loader, version, modId));
-  zip.file("gradle.properties", generateGradleProperties(loader, version, modId));
-  zip.file("gradlew", gradlewScript());
-  zip.file("gradlew.bat", gradlewBatScript());
-  zip.file("gradle/wrapper/gradle-wrapper.properties", gradleWrapperProperties(loader, version));
-  zip.file("gradle/wrapper/gradle-wrapper.jar", gradleWrapperJarBase64(), { base64: true });
-
-  // Source structure
-  const basePath = `src/main/java/${pkg.replace(/\./g, "/")}/`;
-
-  if (loader === "fabric") {
-    zip.file(basePath + "ModMain.java", generateFabricMain(pkg, modId));
-    zip.file("src/main/resources/fabric.mod.json", generateFabricModJson(modId, pkg));
-  }
-
-  if (loader === "forge") {
-    zip.file(basePath + "ModMain.java", generateForgeMain(pkg, modId));
-    zip.file("src/main/resources/META-INF/mods.toml", generateForgeModsToml(modId));
-  }
-
-  if (loader === "neoforge") {
-    zip.file(basePath + "ModMain.java", generateNeoForgeMain(pkg, modId));
-    zip.file("src/main/resources/META-INF/mods.toml", generateNeoForgeModsToml(modId));
-  }
-
-  return zip;
-}
-function openSettings() {
-  document.getElementById('system-prompt-input').value = state.systemPrompt;
-  document.getElementById('api-status').classList.add('hidden');
-  document.getElementById('modal-overlay').classList.add('visible');
-}
-
-function closeModal() {
-  document.getElementById('modal-overlay').classList.remove('visible');
-}
-
-function closeModalOutside(e) {
-  if (e.target === document.getElementById('modal-overlay')) closeModal();
-}
-
-function saveSettings() {
-  const prompt = document.getElementById('system-prompt-input').value.trim();
-  state.systemPrompt = prompt || DEFAULT_SYSTEM;
-  writeStoredValue('mci_system', state.systemPrompt);
-
-  const status = document.getElementById('api-status');
-  status.className = 'api-status';
-  status.textContent = 'âœ“ Settings saved successfully';
-  status.classList.remove('hidden');
-  setTimeout(closeModal, 1200);
-  checkApiKey();
-}
-
-function checkApiKey() {
-  return true;
-}
-
-function resolveBuildModName(customModName, chat) {
-  const t = String(customModName||'').trim();
-  return t || 'MinecraftMod';
-}
-
-async function buildZipBlobFromFiles(files, filterFn) {
-  const zip = new JSZip();
-  Object.entries(files||{}).forEach(([p,d]) => {
-    if (filterFn && !filterFn(p,d)) return;
-    const n = normalizeBuildFile(p,d);
-    if (n.encoding === 'base64') zip.file(p, n.content, { base64: true });
-    else zip.file(p, n.content);
-  });
-  return zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
-}
-
-function normalizeBuildFile(p, d) {
-  if (typeof d === 'string') return { path: p, encoding: 'utf8', content: d };
-  return { path: p, encoding: d?.encoding === 'base64' ? 'base64' : 'utf8', content: d?.content || '' };
-}
-function shouldIncludeInSourceArchive() { return true; }
-function makeDownloadLink(blob, fileName) { return { url: URL.createObjectURL(blob), fileName }; }
-
-function renderBuildAttemptLines(logEl, attempts) {
-  if (!Array.isArray(attempts)) return;
-  attempts.forEach(a => {
-    const line = document.createElement('div');
-    line.className = 'build-log-line ' + (a.success ? 'done' : 'error');
-    line.innerHTML = `<span class="step-icon"></span><span>${escapeHtml(`Attempt ${a.attempt}: ${a.success ? 'passed' : 'failed'}`)}</span>`;
-    logEl.appendChild(line);
-    if (a.fixSummary) {
-      const fix = document.createElement('div');
-      fix.className = 'build-log-line done';
-      fix.innerHTML = `<span class="step-icon"></span><span>${escapeHtml('AI fix: ' + a.fixSummary)}</span>`;
-      logEl.appendChild(fix);
-    }
-  });
-}
-
-function renderActivityConsole(logEl, entries) {
-  if (!logEl) return;
-  logEl.innerHTML = '';
-  const list = Array.isArray(entries) ? entries.slice(-40) : [];
-  if (!list.length) {
-    logEl.innerHTML = '<div class="build-activity-line">Waiting for worker activity...</div>';
-    return;
-  }
-  list.forEach(entry => {
-    const line = document.createElement('div');
-    line.className = 'build-activity-line';
-    const time = entry?.time ? new Date(entry.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '--:--:--';
-    line.innerHTML = `<strong>${escapeHtml(time)}</strong> ${escapeHtml(entry?.message || '')}`;
-    logEl.appendChild(line);
-  });
-  logEl.scrollTop = logEl.scrollHeight;
-}
-
-function buildResearchSummary(loader, version) {
-  if (loader === 'fabric') {
-    const data = getFabricBuildData(version);
-    return `Researched from official sources: Gradle ${data.gradleVersion}, loader ${data.loaderVersion}, loom ${data.loomVersion}${data.yarnVersion ? `, Yarn ${data.yarnVersion}` : ''}${data.fabricApiVersion ? `, Fabric API ${data.fabricApiVersion}` : ''}`;
-  }
-  if (loader === 'forge') {
-    const data = getForgeBuildData(version);
-    return `Researched from official sources: Gradle ${data.gradleVersion}, Forge ${data.forgeVersion}, ForgeGradle ${data.forgeGradleVersion}`;
-  }
-  if (loader === 'neoforge') {
-    const data = getNeoForgeBuildData(version);
-    return `Researched from official sources: Gradle ${data.gradleVersion}, NeoForge ${data.neoforgeVersion}, userdev ${data.userdevVersion}`;
-  }
-  return '';
-}
-
-function appendBuildLog(progress, title, logText) {
-  if (!logText) return;
-  const det = document.createElement('details');
-  det.style.marginTop = '8px';
-  det.innerHTML = `<summary>${escapeHtml(title)}</summary><pre>${escapeHtml(logText)}</pre>`;
-  progress.appendChild(det);
-}
-
-async function startBuild(btn, fullText, customModName = '') {
-  const prompt = btn.closest('.build-prompt');
-  const loader = getSelectedLoader();
-  const version = getSelectedVersion();
-  await ensureBuildResearch(loader, version);
-  const chat = getCurrentChat();
-  const modName = resolveBuildModName(customModName, chat);
-  const project = window.CodexBuildProject.createGeneratedProject({
-    fullText,
-    wrapperFiles: {
-      gradlew: gradlewScript(),
-      gradlewBat: gradlewBatScript(),
-      wrapperProperties: gradleWrapperProperties(loader, version),
-      wrapperJar: { encoding: 'base64', content: gradleWrapperJarBase64() },
-    },
-  });
-  const missingFiles = window.CodexBuildProject.getMissingProjectFiles(loader, project.files);
-  const buildPayload = {
-    loader,
-    version,
-    modName,
-    files: project.files,
-    conversation: (chat?.messages||[]).slice(-8).map(m => ({ role: m.role, content: m.content })),
-  };
-
-  const progress = document.createElement('div');
-  progress.className = 'build-progress';
-  progress.innerHTML = `
-    <div class="build-progress-title">Building <strong>${escapeHtml(loader)} ${escapeHtml(version)}</strong> mod — <strong>${escapeHtml(modName)}</strong></div>
-    <div class="build-source-note">${escapeHtml(buildResearchSummary(loader, version))}</div>
-    <div class="build-log" id="blog-${Date.now()}"></div>
-    <div class="build-activity-console">
-      <div class="build-activity-head">Live Activity</div>
-      <div class="build-activity-log"></div>
-    </div>
-  `;
-  prompt.replaceWith(progress);
-  const log = progress.querySelector('.build-log');
-  const activityLogEl = progress.querySelector('.build-activity-log');
-  renderActivityConsole(activityLogEl, [{ time: new Date().toISOString(), message: 'Prepared project files and queued research-backed build.' }]);
-
-  function addLine(text, state) {
-    const l = document.createElement('div');
-    l.className = 'build-log-line ' + state;
-    l.innerHTML = `<span class="step-icon"></span><span>${escapeHtml(text)}</span>`;
-    log.appendChild(l);
-    scrollToBottom();
-    return l;
-  }
-
-  addLine('Project files prepared from AI response.', 'done');
-  if (missingFiles.length) {
-    addLine(`Build stopped: the AI did not generate the required project files: ${missingFiles.join(', ')}`, 'error');
-    appendBuildLog(progress, 'What To Regenerate', `Ask the AI to regenerate the full ${loader} project and include these files explicitly:\n${missingFiles.join('\n')}`);
-    scrollToBottom();
-    return;
-  }
-  const reqLine = addLine('Starting build worker on server...', 'running');
-
-  function triggerWorker(jobId) {
-    return fetchBackend('build-mod-worker', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jobId,
-        ...buildPayload,
-      }),
-    });
-  }
-
-  function createClientJobId() {
-    try {
-      if (window.crypto?.randomUUID) return window.crypto.randomUUID();
-    } catch {}
-    return 'job_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);
-  }
-
-  async function renderSourceOnlyFallback(progress, finalFiles, loader, version, modName, message, extraLog = '') {
-    const srcBlob = await buildZipBlobFromFiles(finalFiles, shouldIncludeInSourceArchive);
-    const srcZip = makeDownloadLink(srcBlob, `${modName}-${version}-${loader}-source.zip`);
-    const btns = document.createElement('div');
-    btns.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;';
-    btns.innerHTML = `<a class="build-download-btn secondary" href="${srcZip.url}" download="${srcZip.fileName}">Download Sources</a>`;
-    progress.appendChild(btns);
-    appendBuildLog(progress, 'Build log', extraLog || message);
-    scrollToBottom();
-    return srcZip;
-  }
-
-  try {
-    const jobId = createClientJobId();
-    let workerFailed = false;
-    triggerWorker(jobId).then(async workerStart => {
-      const workerResponse = workerStart?.response;
-      const workerBody = workerResponse ? await workerResponse.clone().json().catch(() => ({})) : {};
-      if (workerResponse?.ok) {
-        if (workerBody?.status === 'failed') {
-          workerFailed = true;
-          const message = workerBody?.message || 'Vercel could not complete the JAR build.';
-          reqLine.className = 'build-log-line error';
-          wkrLine.className = 'build-log-line error';
-          wkrLine.querySelector('span:last-child').textContent = 'Vercel source-only mode is active for this build.';
-          await renderSourceOnlyFallback(progress, project.files, loader, version, modName, message, message);
-        }
-        return;
-      }
-      const message = await readErrorMessage(workerResponse, `HTTP ${workerResponse?.status || 500}`);
-      if (/FUNCTION_INVOCATION_TIMEOUT/i.test(message)) {
-        workerFailed = true;
-        reqLine.className = 'build-log-line error';
-        wkrLine.className = 'build-log-line error';
-        wkrLine.querySelector('span:last-child').textContent = 'Vercel timed out while building the JAR.';
-        await renderSourceOnlyFallback(progress, project.files, loader, version, modName, 'Vercel timed out while building the JAR. Source download is ready instead.', message);
-        return;
-      }
-      reqLine.className = 'build-log-line error';
-      addLine('Worker start failed: ' + message, 'error');
-    }).catch(async error => {
-      const message = String(error?.message || error || 'Unknown worker start error');
-      if (/FUNCTION_INVOCATION_TIMEOUT/i.test(message)) {
-        workerFailed = true;
-        reqLine.className = 'build-log-line error';
-        wkrLine.className = 'build-log-line error';
-        wkrLine.querySelector('span:last-child').textContent = 'Vercel timed out while building the JAR.';
-        await renderSourceOnlyFallback(progress, project.files, loader, version, modName, 'Vercel timed out while building the JAR. Source download is ready instead.', message);
-        return;
-      }
-      reqLine.className = 'build-log-line error';
-      addLine('Could not start build worker: ' + message, 'error');
-    });
-    reqLine.className = 'build-log-line done';
-    reqLine.querySelector('span:last-child').textContent = 'Build worker request sent.';
-    let wkrLine = addLine('Job ' + jobId + ' created. Waiting for worker status...', 'running');
-    if (false) {
-      startedDirectly = true;
-      jobId = await startDirectWorkerFallback(response.status, result.message || '');
-      if (!jobId) {
-        reqLine.className = 'build-log-line error';
-      addLine('Server error (HTTP ' + response.status + '): ' + (result.message || 'No jobId returned — make sure BLOB_READ_WRITE_TOKEN is set in your Vercel environment variables.'), 'error');
-        return;
-      }
-    }
-
-    reqLine.className = 'build-log-line done';
-    reqLine.querySelector('span:last-child').textContent = 'Build worker request sent.';
-    wkrLine.querySelector('span:last-child').textContent = 'Job ' + jobId + ' created. Waiting for worker status...';
-
-    let renderedAttempts = 0, status = null, queuedSince = Date.now();
-
-    async function probeBuildResult() {
-      const filesQuery = `?jobId=${encodeURIComponent(jobId)}&kind=files`;
-      const filesFetch = await fetchBackend('build-mod-result', {}, filesQuery).catch(() => null);
-      const filesResponse = filesFetch?.response;
-      if (!filesResponse?.ok) return null;
-
-      const filesJson = await filesResponse.json().catch(() => ({}));
-      const jarFetch = await fetchBackend('build-mod-result', {}, `?jobId=${encodeURIComponent(jobId)}&kind=jar`).catch(() => null);
-      const jarResponse = jarFetch?.response;
-      const logFetch = await fetchBackend('build-mod-result', {}, `?jobId=${encodeURIComponent(jobId)}&kind=log`).catch(() => null);
-      const logResponse = logFetch?.response;
-      const logText = logResponse?.ok ? await logResponse.text().catch(() => '') : '';
-
-      return {
-        status: jarResponse?.ok ? 'completed' : 'failed',
-        files: filesJson.files || project.files,
-        buildLogTail: logText,
-        message: jarResponse?.ok ? '' : 'Build finished, but live status updates were unavailable.',
-      };
-    }
-
-    for (let i = 0; i < 1080; i++) {
-      await new Promise(r => setTimeout(r, 2500));
-      if (workerFailed) return;
-      const { response: sr } = await fetchBackend('build-mod-status', {}, `?jobId=${encodeURIComponent(jobId)}`);
-      const sj = await sr.json().catch(() => ({}));
-      if (!sr.ok) {
-        if (sr.status === 404 || sr.status >= 500) {
-          const probed = await probeBuildResult();
-          if (probed) {
-            status = probed;
-            break;
-          }
-          if (Date.now() - queuedSince < 2700000) continue;
-        }
-        throw new Error(sj.message || `Status HTTP ${sr.status}`);
-      }
-      status = sj;
-      renderActivityConsole(activityLogEl, status.activityLog);
-
-      if (Array.isArray(status.attempts) && status.attempts.length > renderedAttempts) {
-        renderBuildAttemptLines(log, status.attempts.slice(renderedAttempts));
-        renderedAttempts = status.attempts.length;
-      }
-
-      if (status.status === 'queued') {
-        if (Date.now() - queuedSince > 45000) {
-          wkrLine.className = 'build-log-line error';
-          addLine('Worker did not start within 45s. Check Vercel function logs.', 'error');
-          return;
-        }
-      } else if (status.status === 'running') {
-        wkrLine.className = 'build-log-line running';
-        wkrLine.querySelector('span:last-child').textContent = 'Gradle is running. Applying AI fixes as needed...';
-        const lastUpdate = status.updatedAt ? Date.parse(status.updatedAt) : NaN;
-        if (Number.isFinite(lastUpdate) && Date.now() - lastUpdate > 2700000) {
-          wkrLine.className = 'build-log-line error';
-          addLine('Worker stopped reporting progress for 45 minutes.', 'error');
-          return;
-        }
-      } else {
-        break;
-      }
-    }
-
-    if (!status || (status.status !== 'completed' && status.status !== 'failed')) {
-      wkrLine.className = 'build-log-line error';
-      addLine('Timed out waiting for build worker.', 'error');
-      return;
-    }
-
-    let finalFiles = status.files || null;
-    if (!finalFiles) {
-      const { response: fr } = await fetchBackend('build-mod-result', {}, `?jobId=${encodeURIComponent(jobId)}&kind=files`);
-      const fj = await fr.json().catch(() => ({}));
-      finalFiles = fr.ok && fj.files ? fj.files : project.files;
-    }
-    const srcBlob = await buildZipBlobFromFiles(finalFiles, shouldIncludeInSourceArchive);
-    const srcZip = makeDownloadLink(srcBlob, `${modName}-${version}-${loader}-source.zip`);
-
-    if (status.status === 'failed') {
-      wkrLine.className = 'build-log-line error';
-      wkrLine.querySelector('span:last-child').textContent = status.message || 'Build failed.';
-      const btns = document.createElement('div');
-      btns.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;';
-      btns.innerHTML = `<a class="build-download-btn secondary" href="${srcZip.url}" download="${srcZip.fileName}">Download Sources</a>`;
-      progress.appendChild(btns);
-      appendBuildLog(progress, 'Build log', status.buildLogTail || status.message || '');
-      scrollToBottom();
-      return;
-    }
-
-    wkrLine.className = 'build-log-line done';
-    wkrLine.querySelector('span:last-child').textContent = 'Build complete. JAR is ready.';
-    const jarUrl = backendUrl('build-mod-result', `?jobId=${encodeURIComponent(jobId)}&kind=jar`);
-    const btns = document.createElement('div');
-    btns.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;';
-    btns.innerHTML = `
-      <a class="build-download-btn" href="${jarUrl}" download="${status.jarFileName || `${safeModId(modName)}-${version}.jar`}">⬇ Download JAR</a>
-      <a class="build-download-btn secondary" href="${srcZip.url}" download="${srcZip.fileName}">⬇ Download Sources</a>
-    `;
-    progress.appendChild(btns);
-    appendBuildLog(progress, 'Build log', status.buildLogTail || '');
-
-  } catch(e) {
-    reqLine.className = 'build-log-line error';
-    addLine('Build error: ' + e.message, 'error');
-  }
-  scrollToBottom();
-}
-
-function getSelectedSetup() {
-  return {
-    loader: document.getElementById("loader-sel")?.value,
-    mcVersion: document.getElementById("version-sel")?.value
-  };
-}
-
-</script>
 </body>
 </html>
