@@ -15,57 +15,75 @@ import {
   resolveFabricVersions,
 } from "./versions";
 
+// Workspace initialization does a delete + copy of many files. If the client
+// triggers init twice (loader/version changes, double-clicks, etc.), concurrent
+// inits for the same session can race and fail mid-copy. We serialize per-session.
+const initLocks = new Map<string, Promise<void>>();
+
 export async function initWorkspace(
   sessionId: string,
   loader: LoaderId,
   versionValue: string,
 ) {
   const root = workspaceDir(sessionId);
-  await rm(root, { recursive: true, force: true });
-  await ensureDir(root);
 
-  const shared = sharedGradleDir();
-  const tpl = path.join(templatesDir(), loader);
-  await cp(shared, root, { recursive: true });
-  await cp(tpl, root, { recursive: true });
+  const prev = initLocks.get(sessionId);
+  if (prev) await prev;
 
+  const lock = (async () => {
+    await rm(root, { recursive: true, force: true });
+    await ensureDir(root);
+
+    const shared = sharedGradleDir();
+    const tpl = path.join(templatesDir(), loader);
+    await cp(shared, root, { recursive: true });
+    await cp(tpl, root, { recursive: true });
+
+    try {
+      await chmod(path.join(root, "gradlew"), 0o755);
+    } catch {
+      /* windows or missing */
+    }
+
+    const propsPath = path.join(root, "gradle.properties");
+    let props = await readFile(propsPath, "utf8");
+
+    let fabricLoom: string | undefined;
+    let mcForGradle: string | undefined;
+
+    if (loader === "fabric") {
+      const v = await resolveFabricVersions(versionValue);
+      fabricLoom = v.loom_version;
+      props = setProp(props, "minecraft_version", versionValue);
+      props = setProp(props, "loader_version", v.loader_version);
+      props = setProp(props, "fabric_api_version", v.fabric_api_version);
+      props = setProp(props, "loom_version", v.loom_version);
+    } else if (loader === "forge") {
+      const { minecraft_version, forge_version } = parseForgeCoordinates(versionValue);
+      mcForGradle = minecraft_version;
+      props = setProp(props, "minecraft_version", minecraft_version);
+      props = setProp(props, "forge_version", forge_version);
+    } else {
+      props = setProp(props, "neo_version", versionValue);
+      const { minecraft_version } = parseNeoMcFromNeoVersion(versionValue);
+      mcForGradle = minecraft_version;
+      props = setProp(props, "minecraft_version", minecraft_version);
+    }
+
+    await writeFile(propsPath, props, "utf8");
+
+    await alignGradleWrapper(root, loader, {
+      fabricLoomVersion: fabricLoom,
+      minecraftVersion: mcForGradle,
+    });
+  })();
+
+  initLocks.set(sessionId, lock);
   try {
-    await chmod(path.join(root, "gradlew"), 0o755);
-  } catch {
-    /* windows or missing */
+    await lock;
+  } finally {
+    if (initLocks.get(sessionId) === lock) initLocks.delete(sessionId);
   }
-
-  const propsPath = path.join(root, "gradle.properties");
-  let props = await readFile(propsPath, "utf8");
-
-  let fabricLoom: string | undefined;
-  let mcForGradle: string | undefined;
-
-  if (loader === "fabric") {
-    const v = await resolveFabricVersions(versionValue);
-    fabricLoom = v.loom_version;
-    props = setProp(props, "minecraft_version", versionValue);
-    props = setProp(props, "loader_version", v.loader_version);
-    props = setProp(props, "fabric_api_version", v.fabric_api_version);
-    props = setProp(props, "loom_version", v.loom_version);
-  } else if (loader === "forge") {
-    const { minecraft_version, forge_version } = parseForgeCoordinates(versionValue);
-    mcForGradle = minecraft_version;
-    props = setProp(props, "minecraft_version", minecraft_version);
-    props = setProp(props, "forge_version", forge_version);
-  } else {
-    props = setProp(props, "neo_version", versionValue);
-    const { minecraft_version } = parseNeoMcFromNeoVersion(versionValue);
-    mcForGradle = minecraft_version;
-    props = setProp(props, "minecraft_version", minecraft_version);
-  }
-
-  await writeFile(propsPath, props, "utf8");
-
-  await alignGradleWrapper(root, loader, {
-    fabricLoomVersion: fabricLoom,
-    minecraftVersion: mcForGradle,
-  });
 
   return root;
 }
