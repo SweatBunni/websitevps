@@ -454,8 +454,6 @@ let state = {
 const CHAT_CTX_MSGS = 8;
 const CHAT_CTX_PER_MSG = 6000;
 const CHAT_CTX_TOTAL = 24000;
-let backendProvider = null;
-
 const FABRIC_VERSIONS = [];
 const FORGE_VERSIONS  = [];
 const NEO_VERSIONS    = [];
@@ -542,25 +540,14 @@ function updateSidebarState() {
   if (backdrop) backdrop.classList.toggle('visible', state.isMobileLayout && state.sidebarOpen);
 }
 function backendCandidates(name, query = '') {
-  const list = [{ provider: 'vercel', url: `/api/${name}${query}` }, { provider: 'netlify', url: `/.netlify/functions/${name}${query}` }];
-  if (backendProvider) list.sort((a,b) => a.provider===backendProvider ? -1 : b.provider===backendProvider ? 1 : 0);
-  return list;
+  return [{ provider: 'vps', url: `/api/${name}${query}` }];
 }
 async function fetchBackend(name, init = {}, query = '') {
-  const candidates = backendCandidates(name, query);
-  let lastResponse = null, lastUrl = candidates[0].url;
-  for (const c of candidates) {
-    let response;
-    try { response = await fetch(c.url, init); } catch { continue; }
-    lastResponse = response; lastUrl = c.url;
-    if (response.status === 404) continue;
-    backendProvider = c.provider;
-    return { response, url: c.url, provider: c.provider };
-  }
-  if (lastResponse) return { response: lastResponse, url: lastUrl, provider: backendProvider };
-  throw new Error('No supported backend endpoint responded.');
+  const url = `/api/${name}${query}`;
+  const response = await fetch(url, init);
+  return { response, url, provider: 'vps' };
 }
-function backendUrl(name, query = '') { return backendCandidates(name, query)[0].url; }
+function backendUrl(name, query = '') { return `/api/${name}${query}`; }
 async function readErrorMessage(response, fallback) {
   if (!response) return fallback;
   try {

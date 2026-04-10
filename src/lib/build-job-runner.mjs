@@ -1,5 +1,5 @@
 import { executeBuildJob } from './build-common.mjs';
-import { getJson, getLatestStatus, putBytes, putJson, putStatus, putText } from './build-store.mjs';
+import { getJson, getLatestStatus, putBytes, putJson, putStatus, putText } from './store.mjs';
 import { getDeepBuildResearch } from './research-metadata.mjs';
 import { sleep } from './runtime-utils.mjs';
 
@@ -39,7 +39,7 @@ export async function runBuildJobInput(jobId, input) {
     startedAt,
     workerStartedAt: startedAt,
     updatedAt: startedAt,
-    provider: 'vercel',
+    provider: 'vps',
   });
 
   try {
@@ -133,7 +133,7 @@ async function finalizeCompletedJob(jobId, input, startedAt, buildResult) {
     startedAt,
     completedAt,
     updatedAt: completedAt,
-    provider: 'vercel',
+    provider: 'vps',
   });
   return { status: 'completed' };
 }
@@ -155,7 +155,7 @@ async function finalizeFailedJob(jobId, input, startedAt, buildResult) {
     startedAt,
     completedAt: failedAt,
     updatedAt: failedAt,
-    provider: 'vercel',
+    provider: 'vps',
   });
   return { status: 'failed' };
 }
@@ -176,7 +176,7 @@ async function finalizeWorkerError(jobId, input, startedAt, error) {
     startedAt,
     completedAt: failedAt,
     updatedAt: failedAt,
-    provider: 'vercel',
+    provider: 'vps',
   });
   return { status: 'failed' };
 }
@@ -203,7 +203,7 @@ async function updateRunningStatus(jobId, input, startedAt, mapper) {
     createdAt: input.createdAt,
     startedAt,
     updatedAt: new Date().toISOString(),
-    provider: 'vercel',
+    provider: 'vps',
     ...mapped,
   });
 }
