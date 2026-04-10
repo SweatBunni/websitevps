@@ -11,7 +11,7 @@ export function normalizeOllamaBaseUrl(raw?: string): string {
 }
 
 /** Flagship Qwen3 Coder on Ollama (MoE); ollama pull qwen3-coder-next */
-const OLLAMA_DEFAULT_PRIMARY = "qwen3-coder-next";
+const OLLAMA_DEFAULT_PRIMARY = "qwen2.5-coder:7b";
 
 /** After primary + env fallbacks — smaller / older Qwen coder lines only */
 const OLLAMA_DEFAULT_CHAIN = [
